@@ -50,7 +50,6 @@ library(estimatr)
 library(knitr)
 options(digits=3)
 ```
----
 
 # Course Overview
 
@@ -190,8 +189,6 @@ options(digits=3)
 
 :::
 
----
-
 # Estimation review
 
 
@@ -309,8 +306,7 @@ $$Var(X - Y) = Var(X) + Var(Y)$$
   - For example: $Pr(D_i = 1 | X_i = x)$
 
 :::
-      
----
+
 
 # Conditional probabilities
 
@@ -479,8 +475,6 @@ $$Var(X - Y) = Var(X) + Var(Y)$$
     - So in large samples, the **sampling distribution** of $\hat{\mu}$ is close to normal. This lets us construct confidence intervals and do inference with this approximation and be confident that we won't be far off!
 
 :::
-
----
 
 # Regression review
 
