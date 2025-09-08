@@ -1,0 +1,604 @@
+---
+title: "Week 2: Regression"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "September 8, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: false
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+
+---
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(broom)
+options(digits=3)
+```
+
+# Previously
+
+::: {.incremental}
+- Estimands, Estimators, Estimates
+- Properties of (frequentist) estimators
+  - Bias
+  - Variance
+  - Consistency
+- How to articulate uncertainty
+  - What does it mean to say that your 95% confidence interval is $[0.40, 0.60]$?
+  - How does it connect to hypothesis testing?
+
+:::
+
+# This week
+
+::: {.incremental}
+
+- Linear regression and the "Best Linear Predictor"
+- Classical statistical theory for OLS
+  - When is it unbiased/consistent
+  - How do we do inference?
+  - Gauss-Markov assumptions
+- Introduction to **likelihood** inference
+
+:::
+
+# Regression
+
+::: {.incremental}
+
+- Rather than just estimating a population mean, we are more typically interested in some population **conditional expectation** $\mathbb{E}[Y|X]$
+  - $Y_i$: Outcome/response/dependent variable
+  - $X_i$: Vector of regressor/independent variables 
+- "How does the expected value of $Y$ differ across different values of $X$?"
+- Suppose we observe $N$ paired observations of $\{Y_i, X_i\}$. 
+  - How do we construct a "good" estimator of $\mathbb{E}[Y|X]$?
+  - What assumptions do we have to make to get...consistency...unbiasedness...efficiency?
+
+:::
+
+# Example: Predicting the 2016 election
+
+- How do different parts of the U.S. vary in their election outcomes?
+  - Knowing something about the region, can I predict what share voted for Clinton in the 2016 election?
+  
+```{r, message=F, echo=T}
+election <- read_csv("data/prez_election_2016_vote.csv")
+election$voteshare <- 100*(election$candidatevotes/election$totalvotes)
+election <- election %>% filter(!is.na(voteshare)&!is.na(pctWhiteNH))
+```
+
+- What is the expected vote share ($Y$) conditional on the share of county residents who are non-hispanic white ($X$) ?
+
+# Plot the data!
+
+```{r, fig.width=8, fig.height=6, fig.align='center', warning=F}
+election %>% ggplot(aes(x=pctWhiteNH, y=voteshare)) + geom_point() +
+  theme_minimal() + labs(x="Percent white non-hispanic", y="Percent Clinton (2016)")
+```
+
+# Binning
+
+- We could coarsen $X$ and just calculate means within each bin!
+  - In fact...this is what we do with large datasets anyway...and this ends up also being a regression!
+
+```{r, echo=T}
+election$pctWhiteNH_bins <- cut(election$pctWhiteNH, 10)
+election_means <- election %>% group_by(pctWhiteNH_bins) %>%
+  summarize(voteshare = mean(voteshare, na.rm=T), pctWhiteNH = median(pctWhiteNH, na.rm=T))
+```
+
+# Binning
+
+```{r, fig.width=8, fig.height=6, fig.align='center', warning=F}
+election %>% ggplot(aes(x=pctWhiteNH, y=voteshare)) + geom_point(alpha = .2) +
+  geom_point(data=election_means, col="Red", size=5) +
+  theme_minimal() + labs(x="Percent white non-hispanic", y="Percent Clinton (2016)")
+```
+
+# Best Linear Predictor (BLP)
+
+- The **Best Linear Predictor** or **population regression** is a function of $\mathbf{X}$
+
+$$m(x) = x^\prime\beta = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_3 + \dotsc$$
+
+- The $\beta$ parameters minimize the **expected prediction error**
+
+$$\beta = \argmin_b \ \mathbb{E}[(Y_i - X_i^\prime b)^2]$$
+
+- Note that this is a **population** quantity
+  - $m(x)$ is an *estimand* like any other estimand we've talked about
+  - $m(x)$ and $E[Y|X]$ might differ substantially!
+
+# Best Linear Predictor (BLP)
+
+- Is there a closed form expression for the population regression coefficients $\beta$?
+  - Yes - with some algebra (solving for the first order conditions), we get
+  
+$$\beta = (\mathbb{E}[X_iX_i^\prime])^{-1}\mathbb{E}[X_iY_i]$$
+
+- Our linear projection becomes
+
+$$m(X_i) = X_i^\prime\beta = X_i^\prime (\mathbb{E}[X_iX_i^\prime])^{-1}\mathbb{E}[X_iY_i]$$
+
+# Properties
+
+- What have we assumed so far?
+  - Finite mean/variance/covariances for $Y$ and $X$
+  - Columns of $X$ are linearly independent (no perfect collinearity)
+  
+# Projection error
+
+- What can we say about the difference between the BLP and $Y$?
+
+$$e_i = Y_i - m(X_i)$$
+
+- Rewriting, we have
+
+$$Y_i = X_i^\prime\beta + e_i$$
+
+# Projection error
+
+- We can show that the projection error is mechanically uncorrelated with the predictors
+
+$$\begin{align*}
+\mathbb{E}[X_i e_i] &= \mathbb{E}[X_i(Y_i - X_i^\prime\beta)]\\
+&= \mathbb{E}[X_iY_i] - \mathbb{E}[X_iX_i^\prime]\beta\\
+&= \mathbb{E}[X_iY_i] - \mathbb{E}[X_iX_i^\prime](\mathbb{E}[X_iX_i^\prime])^{-1}\mathbb{E}[X_iY_i]\\
+&= \mathbb{E}[X_iY_i] - \mathbb{E}[X_iY_i] = 0\\
+\end{align*}$$
+
+- Since $X_{ik} = 1$ is typically one of the regressors (the "intercept"), this also implies $\mathbb{E}[e_i] = 0$
+
+# Projection error
+
+- This means that the covariance of $X_i$ and the projection error $e_i$ is zero!
+
+$$\begin{align*}
+Cov(X_i, \epsilon) = \mathbb{E}[X_ie_i] - E[X_i]E[e_i] = 0 - 0 = 0
+\end{align*}$$
+
+- Importantly, we have derived these properties on the **Best Linear Predictor** and the **projection error** without making any assumptions on the error itself!
+  - This is **mechanically true** by the way we've defined the BLP
+
+# Estimating the BLP
+
+::: {.incremental}
+
+- Remember, $m(X)$ is a *population quantity* - can we come up with an *estimator* in our sample that is consistent for it?
+  - **plug-in principle** - Where we have population expectations, plug in their sample equivalents
+  
+- Our estimand
+
+  $$\beta = (\mathbb{E}[X_iX_i^\prime])^{-1}\mathbb{E}[X_iY_i]$$
+
+- Our estimator
+
+  $$\hat{\beta} = \bigg(\frac{1}{n} \sum_{i=1}^n X_iX_i^\prime\bigg)^{-1}\bigg(\frac{1}{n} \sum_{i=1}^n X_iY_i\bigg)$$
+
+- Often written as:
+
+  $$\hat{\beta} = (\mathbf{X}^\prime\mathbf{X})^{-1}(\mathbf{X}^\prime Y)$$
+:::
+
+# Estimating the BLP
+
+- Is $\hat{\beta}$ consistent for $\beta$?
+- Let's write $\hat{\beta}$ as a function of $\beta$ and the **projection error**
+
+$$\hat{\beta} = \beta + \bigg(\frac{1}{n} \sum_{i=1}^n X_iX_i^\prime\bigg)^{-1}\bigg(\frac{1}{n} \sum_{i=1}^n X_ie_i\bigg) $$
+
+::: {incremental}
+
+- We can use the **weak law of large numbers**
+  - Sample averages of i.i.d. random variables converge in probability to their population expectations
+  
+  $$\frac{1}{n} \sum_{i=1}^n X_iX_i^\prime \overset{p}{\to} \mathbb{E}[X_iX_i^\prime]$$
+  
+  $$\frac{1}{n} \sum_{i=1}^n X_ie_i \overset{p}{\to} \mathbb{E}[X_ie_i] = 0$$
+
+:::
+
+# Estimating the BLP 
+
+::: {.incremental}
+
+- Plugging it all in, we have 
+
+  $$\hat{\beta} \overset{p}{\to} \beta$$
+
+
+
+- Ordinary least squares is consistent for the best linear predictor under relatively mild assumptions
+  - i.i.d. sample (can weaken this with LLNs for dependent random variables)
+  - finite moments (true for most outcomes and regressors you'll work with)
+  - no perfect collinearity (you can check if this is a problem!)
+  
+- What have we *not* assumed
+  - Linear CEF
+  - Homoskedastic errors
+  - Normal outcome
+  
+:::
+
+
+# Asymptotic normality
+
+- In large samples, what is the distribution of $\hat{\beta}$?
+  
+$$\sqrt{n}(\hat{\beta} - \beta) = \bigg(\frac{1}{n} \sum_{i=1}^n X_iX_i^\prime\bigg)^{-1}\bigg(\frac{1}{\sqrt{n}} \sum_{i=1}^n X_ie_i\bigg)$$
+
+- We know that $\bigg(\frac{1}{n} \sum_{i=1}^n X_iX_i^\prime\bigg)^{-1} \overset{p}{\to} E[X_iX_i^\prime]^{-1}$
+
+# Asymptotic normality
+
+::: {.incremental}
+
+- We can apply the CLT to the other term. We know the expectation is zero, what about the variance?
+  
+  $$Var(X_ie_i) = \mathbb{E}[X_i e_i (X_i e_i)^\prime] = \mathbb{E}[e_i^2X_i X_i^\prime]$$
+- By the CLT, we have 
+
+  $$\frac{1}{\sqrt{n}} \sum_{i=1}^n X_ie_i \overset{d}{\to} \mathcal{N}(0, \mathbb{E}[e_i^2X_i X_i^\prime])$$
+
+- Combining with our other convergence result using Slutsky's theorem gives
+
+  $$\sqrt{n}(\hat{\beta} - \beta) \overset{d}{\to} \mathcal{N}\bigg(0, (E[X_iX_i^\prime])^{-1} (\mathbb{E}[e_i^2X_i X_i^\prime]) (E[X_iX_i^\prime])^{-1}\bigg)$$
+
+:::
+
+# Variance estimation
+
+::: {.incremental}
+
+- Again, we have a bunch of population expectations, let's plug in their sample equivalents!
+
+- Our estimand
+
+  $$Var(\hat{\beta}) = \frac{1}{n} (E[X_iX_i^\prime])^{-1} (\mathbb{E}[e_i^2X_i X_i^\prime]) (E[X_iX_i^\prime])^{-1}$$
+  
+- Our estimator
+
+  $$\widehat{Var(\hat{\beta})} = \frac{1}{n} \bigg(\frac{1}{n} \sum_{i=1}^n X_i X_i^\prime \bigg)^{-1}\bigg(\frac{1}{n} \sum_{i=1}^n \hat{e_i}^2 X_i X_i^\prime \bigg)\bigg(\frac{1}{n} \sum_{i=1}^n X_i X_i^\prime \bigg)^{-1}$$
+
+:::
+
+# Variance estimation
+
+- This is often known as the "sandwich" estimator
+
+$$\widehat{Var(\hat{\beta})} =  (\mathbf{X}^\prime\mathbf{X})^{-1} (X^\prime \hat{\Sigma} \mathbf{X}) (\mathbf{X}^\prime\mathbf{X})^{-1}$$
+where $\hat{\Sigma} = \text{diag}(\hat{e_1}^2, \hat{e_2}^2, \dotsc \hat{e_n}^2)$
+
+- It's also referred to as the **heteroskedasticity-consistent** robust variance estimator
+  - We have made no assumptions on the variance of $e_i$ -- we're just plugging in the regression residuals.
+
+
+# BLP vs. Binning
+
+```{r, fig.width=8, fig.height=6, fig.align='center', warning=F}
+election %>% ggplot(aes(x=pctWhiteNH, y=voteshare)) + geom_point(alpha = .2) +
+  geom_point(data=election_means, col="Red", size=5) + geom_smooth(method = "lm", formula = y ~ x) +
+  theme_minimal() + labs(x="Percent white non-hispanic", y="Percent Clinton (2016)")
+```
+
+# Inference
+
+- Let's actually calculate the "robust" standard errors by hand
+
+```{r , echo=T}
+linreg <- lm(voteshare ~ pctWhiteNH, data=election)
+summary(linreg)
+```
+
+# Inference
+
+- Get the $\mathbf{X}$ matrix
+
+```{r, echo=T}
+X <- model.matrix(voteshare ~ pctWhiteNH, data=election)
+head(X)
+```
+
+# Inference
+
+- Get the residuals
+
+```{r, echo=T}
+e <- residuals(linreg)
+```
+
+- "sandwich" estimator
+
+```{r, echo=T}
+bread <- solve(t(X)%*%X)
+meat <- (t(X)%*%diag(e^2)%*%X)
+hc0 <- bread%*%meat%*%bread
+hc0
+```
+
+# Inference
+
+- Let's get the standard errors
+
+```{r, echo=T}
+sqrt(diag(hc0))
+```
+
+- Compare to the classical ones
+
+```{r, echo=T}
+sqrt(diag(vcov(linreg)))
+```
+
+- You can get the robust variance estimator using `lm_robust` in `estimatr`
+
+```{r, echo=T}
+lm_robust(voteshare ~ pctWhiteNH, data=election, se_type="HC0")
+```
+
+
+# Classical regression
+
+::: {.incremental}
+
+- We've shown that the OLS estimator is consistent and asymptotically normal for the **Best Linear Predictor**
+  - What about for estimating the **conditional expectation function**? $E[Y|X]$
+  
+- To do inference on the CEF, we assume that it's equal to the BLP!
+
+- **Assumption 1**: Linearity
+
+  $$Y_i = X_i^\prime\beta + \epsilon_i$$
+
+- **Assumption 2**: Strict exogeneity of the errors
+
+  $$\mathbb{E}[\epsilon | \mathbf{X}] = 0$$
+- What does this get us?
+  - Finite-sample properties of OLS (unbiasedness in addition to consistency!)
+
+- When is linearity always **true**?
+  - When we have a fully-saturated model!
+
+:::
+
+# Classical regression
+
+::: {.incremental}
+
+- **Assumption 3**: No perfect collinearity
+  - $\mathbf{X}^{\prime}\mathbf{X}$ is invertible
+  - $\mathbf{X}$ has full column rank
+
+- Again, when does this fail? How can we check?
+
+:::
+
+# Classical regression
+
+- Under assumptions 1-3, our OLS estimator $\hat{\beta}$ is also **unbiased** for $\beta$
+- Let's do a quick proof for unbiasedness
+
+$$\begin{align*}\hat{\beta} &= (\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}Y)\\
+ &= (\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}(\mathbf{X}\beta + \epsilon))\\
+ &= (\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}\mathbf{X})\beta + (\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}\epsilon)\\
+ &= \beta + (\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}\epsilon)
+ \end{align*}$$
+
+- Then we can obtain the conditional expectation of $\mathbb{E}[\hat{\beta} | \mathbf{X}]$
+
+$$\begin{align*} \mathbb{E}[\hat{\beta} | \mathbf{X}] &= \mathbb{E}\bigg[\beta + (\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}\epsilon) \bigg| \mathbf{X} \bigg]\\
+&= \mathbb{E}[\beta | \mathbf{X}] + \mathbb{E}[(\mathbf{X}^{\prime}\mathbf{X})^{-1}(\mathbf{X}^{\prime}\epsilon) | \mathbf{X}]\\
+&= \beta + (\mathbf{X}^{\prime}\mathbf{X})^{-1}\mathbf{X}^{\prime} \mathbb{E}[\epsilon | \mathbf{X}]\\
+&= \beta + (\mathbf{X}^{\prime}\mathbf{X})^{-1}\mathbf{X}^{\prime}0\\
+&= \beta
+ \end{align*}$$
+
+
+# Classical regression
+
+::: {.incremental}
+
+- Lastly, by law of total expectation 
+
+  $$\mathbb{E}[\hat{\beta}] = \mathbb{E}[\mathbb{E}[\hat{\beta}|\mathbf{X}]]$$
+
+- Therefore 
+
+  $$\mathbb{E}[\hat{\beta}] = \mathbb{E}[\beta] = \beta$$
+
+- Note that the assumptions here are slightly stronger than what we needed for consistency for the BLP
+
+- But what have we not assumed?
+  - Anything about the distribution of the errors (aside from finite 1st/2nd moments)
+  
+:::
+
+# Classical regression
+
+::: {.incremental}
+
+- **Assumption 4** - Spherical errors
+
+  $$Var(\epsilon | \mathbf{X}) = \begin{bmatrix}
+\sigma^2 & 0 & \cdots & 0\\
+0 & \sigma^2 & \cdots & 0\\
+\vdots & \vdots & \ddots & \vdots \\
+0 & 0 & \cdots & \sigma^2
+\end{bmatrix} =  \sigma^2 \mathbf{I}$$
+
+- Benefits
+  - Simple, unbiased estimator for the variance of $\hat{\beta}$
+  - Completes Gauss-Markov assumptions $\leadsto$ OLS is BLUE (Best Linear Unbiased Estimator)
+  
+- Drawbacks
+  - Basically never is true
+  
+:::
+  
+# Classical regression
+
+- Under spherical errors, the variance formula simplifies 
+
+$$Var(\beta) =  (\mathbf{X}^\prime\mathbf{X})^{-1} (\sigma^2 X^\prime \mathbf{X}) (\mathbf{X}^\prime\mathbf{X})^{-1}$$
+$$Var(\beta) =  \sigma^2 (\mathbf{X}^\prime\mathbf{X})^{-1}$$
+
+- All we need is an estimator for $\sigma^2$ 
+  - A consistent one is just the sample variance of the residuals
+  - Can do better by including a "degrees of freedom" correction -- the within-sample variance is always going to under-estimate the population variance
+
+# Classical regression
+
+- **Assumption 5** - Normality of the errors
+
+$$\epsilon | \mathbf{X} \sim \mathcal{N}(0, \sigma^2)$$
+
+- Not necessary even for Gauss-Markov assumptions
+- Not needed to do asymptotic inference on $\hat{\beta}$
+  - Why? Central Limit Theorem!
+
+- Benefits?
+  - Finite-sample **inference** (no reliance on asymptotics for hypothesis tests)
+  - Inference for **predictions** from the model.
+
+- Drawbacks
+  - Again, almost never true unless our outcome is a sum or mean of a large number of i.i.d. random variables
+  
+
+# Regression review
+
+::: {.incremental}
+
+- What do we need for OLS to be consistent for the "best linear approximation" to the CEF?
+  - Very little!
+
+- What do we need for OLS to be consistent and unbiased for the conditional expectation function?
+  - Truly linear CEF
+  - But still no assumptions about the outcome distribution!
+  
+- What do we need to do inference on $\hat{\beta}$?
+  - We almost never assume homoskedasticity because "robust" SE estimators are ubiquitous
+  - Even some forms of error correlation are permitted ("cluster" robust SEs)
+  - Sample sizes are usually large enough where Central Limit Theorem implies a normal sampling distribution is a reasonable approximation.
+
+:::
+
+# Partial regression
+
+::: {.incremental}
+
+- It can be difficult to understand the mechanics of OLS with many regressors.
+  - With a single regressor, we had a nice expression for the coefficient on $X$
+
+  $$Y_i = \beta_0 + \beta_1 X_i + \epsilon$$
+
+  $$\hat{\beta} = \frac{\widehat{Cov}(Y_i, X_i)}{\widehat{Var}(X_i)}$$
+
+- Can we get something like this in the multivariate case?
+
+  $$Y = \mathbf{X}\beta + \epsilon$$
+:::
+
+# Partial regression
+
+::: {.incremental}
+
+- With multiple predictors, we can write the regression coefficient on any of our regressors in terms of **partial regressions**.
+  - Partition $\mathbf{X}$ into two sets of covariates $\mathbb{X}_1$ and $\mathbb{X}_2$
+  
+  $$Y = \mathbb{X}_1\beta_1 + \mathbb{X}_2\beta_2 + \epsilon$$
+
+- The **Frisch-Waugh-Lovell** theorem, states that the OLS estimator of $\hat{\beta_1}$ can be recovered by:
+
+1. Obtaining $Y^{\perp \mathbb{X}_2}$, the **residuals** from a regression of $Y$ on $\mathbb{X}_2$
+2. Obtaining $\mathbb{X}_1^{\perp \mathbb{X}_2}$, the **residuals** from a regression of $\mathbb{X}_1$ on $\mathbb{X}_2$
+3. Regressing $Y^{\perp \mathbb{X}_2}$ on $\mathbb{X}_1^{\perp \mathbb{X}_2}$
+
+
+- Core theoretical mechanics of **many** recent methods papers!
+  - Cinelli and Hazlett (2020) **sensitivity analysis**
+  - Much of the "new DiD" literature (esp. Goodman-Bacon decomposition, Wooldridge's paper on "two-way Mundlak")
+
+:::
+
+# Partial regression
+
+- Suppose I wanted to "control" for state fixed effects
+
+```{r, echo=T}
+linreg_state <- lm(voteshare ~ pctWhiteNH + as.factor(state), data=election)
+tidy(linreg_state) %>% filter(term == "pctWhiteNH")
+```
+
+# Partial regression
+
+- Regression of $Y$ on the fixed effects
+
+```{r, echo=T}
+election$partial_y <- residuals(lm(voteshare ~ as.factor(state), data=election))
+```
+
+- Regression of $X$ on the fixed effects
+
+```{r, echo=T}
+election$partial_x <- residuals(lm(pctWhiteNH ~ as.factor(state), data=election))
+```
+
+- FWL
+
+```{r, echo=T}
+tidy(lm(partial_y ~ partial_x, data=election)) %>% filter(term == "partial_x")
+```
+
+# Partial regression
+
+- With fixed effects, partialing is equivalent to de-meaning $Y$ and $X$ *within* unit 
+  - Sometimes called the "Mundlak" regression
+
+```{r, echo=T}
+voteshare_means <- election %>% group_by(state) %>% summarize(voteshare_state = mean(voteshare))
+pctWhiteNH_means <- election %>% group_by(state) %>% summarize(pctWhiteNH_state = mean(pctWhiteNH))
+
+election <- election %>% left_join(voteshare_means, by="state")
+election <- election %>% left_join(pctWhiteNH_means, by="state")
+
+election$demeaned_y <- election$voteshare - election$voteshare_state
+election$demeaned_x <- election$pctWhiteNH - election$pctWhiteNH_state
+
+tidy(lm(demeaned_y ~ demeaned_x, data=election)) %>% filter(term == "demeaned_x")
+```
