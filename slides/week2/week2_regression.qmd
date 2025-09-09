@@ -1,5 +1,5 @@
 ---
-title: "Week 2: Regression"
+title: "Week 2: Regression + Intro to Statistical Models"
 subtitle: "PS 818 - Statistical Models"
 author:
   - name: "Anton Strezhnev"
@@ -473,14 +473,111 @@ $$\begin{align*} \mathbb{E}[\hat{\beta} | \mathbf{X}] &= \mathbb{E}\bigg[\beta +
   
 # Classical regression
 
+:::{.incremental}
+
 - Under spherical errors, the variance formula simplifies 
 
-$$Var(\beta) =  (\mathbf{X}^\prime\mathbf{X})^{-1} (\sigma^2 X^\prime \mathbf{X}) (\mathbf{X}^\prime\mathbf{X})^{-1}$$
-$$Var(\beta) =  \sigma^2 (\mathbf{X}^\prime\mathbf{X})^{-1}$$
+  $$Var(\beta) =  (\mathbf{X}^\prime\mathbf{X})^{-1} (\mathbf{X}^\prime \sigma^2\mathbf{X}) (\mathbf{X}^\prime\mathbf{X})^{-1}$$
+  $$Var(\beta) =  \sigma^2 (\mathbf{X}^\prime\mathbf{X})^{-1}$$
 
 - All we need is an estimator for $\sigma^2$ 
   - A consistent one is just the sample variance of the residuals
   - Can do better by including a "degrees of freedom" correction -- the within-sample variance is always going to under-estimate the population variance
+
+:::
+
+# Classical regression
+
+:::{.incremental}
+
+- An unbiased estimator for $\sigma^2$ is the sample variance of the residuals (mean squared error) adjusted by a degrees of freedom correction
+
+  $$\hat{\sigma^2} = \frac{1}{n-k} \sum_{i=1}^n (Y_i - \hat{Y_i})^2$$
+
+- $k$ is the number of parameters. We refer to $n-k$ as the "degrees of freedom"
+
+:::
+
+# OLS and Projections
+
+:::{.incremental}
+
+- One way to think about the fitted values from OLS is that they are a **projection** of the n-dimensional vector $Y$ into the **column space** of $\mathbf{X}$
+  - A **column space** is the set of all linear combinations of the columns of $\mathbf{X}$
+- We define the **projection matrix** or **hat matrix**
+  
+  $$\mathbf{P}_{\mathbf{X}} = \mathbf{X}(\mathbf{X}^\prime\mathbf{X})^{-1}\mathbf{X^\prime}$$
+- Our fitted values $\hat{Y}$ are a projection of $Y$ to the "closest" vector that can be represented as a linear combination of the columns of $\mathbf{X}$
+
+  $$\hat{Y} = \mathbf{P}_{\mathbf{X}}Y = \mathbf{X}(\mathbf{X}^\prime\mathbf{X})^{-1}\mathbf{X^\prime}Y = \mathbf{X}\hat{\beta}$$
+
+:::
+
+# OLS is BLUE
+
+- The **Gauss-Markov Theorem**
+  - Under Assumptions 1-4, we can show that there is no other estimator that for $\beta$ that is both **linear** and **unbiased** which has lower variance than $\hat{\beta}_{\text{OLS}}$
+
+# OLS is BLUE
+
+:::{.incremental}
+
+- **Proof**: Suppose there's another linear estimator that diverges from the OLS projection of $Y$ by a non-zero $k \times n$ matrix $D$ 
+
+    $$\tilde{\beta} = ((\mathbf{X}^\prime\mathbf{X})^{-1} \mathbf{X}^\prime + D)Y$$
+    
+- Let's take the expectation
+
+  $$\mathbb{E}[\tilde{\beta}] = \mathbb{E}[\hat{\beta}_{\text{OLS}}] + \mathbb{E}[DY]$$
+- We know OLS is unbiased. Next, we plug in the expression for $Y$ (linearity)
+  
+  $$\mathbb{E}[\tilde{\beta}] = \beta + \mathbb{E}[D\mathbf{X}\beta] + \mathbb{E}[D\epsilon]$$
+:::
+
+# OLS is BLUE
+
+:::{.incremental}
+
+- Pull out the constants and use $\mathbb{E}[\epsilon] = 0$
+    
+  $$\mathbb{E}[\tilde{\beta}] = \beta(\mathbf{I} + D\mathbf{X})$$
+    
+- If $\tilde{\beta}$ is unbiased, then
+
+  $$\beta(\mathbf{I} + D\mathbf{X}) = 0$$
+- This holds for all values of $\beta$ only if $D\mathbf{X} = 0$
+
+:::
+
+# OLS is BLUE
+
+:::{.incremental}
+
+- Under homoskedasticity, the variance is 
+
+  $$Var(\tilde{\beta}) = \sigma^2\bigg((\mathbf{X}^\prime\mathbf{X})^{-1} \mathbf{X}^\prime + D\bigg)\bigg((\mathbf{X}^\prime\mathbf{X})^{-1} \mathbf{X}^\prime + D\bigg)^{\prime}$$
+
+- Using properties of matrix transposes
+
+  $$Var(\tilde{\beta}) = \sigma^2\bigg((\mathbf{X}^\prime\mathbf{X})^{-1} \mathbf{X}^\prime + D\bigg)\bigg(\mathbf{X}(\mathbf{X}^\prime\mathbf{X})^{-1} + D^\prime\bigg)$$
+
+- Expanding
+
+  $$Var(\tilde{\beta}) = \sigma^2\bigg((\mathbf{X}^\prime\mathbf{X})^{-1} \mathbf{X}^\prime\mathbf{X}(\mathbf{X}^\prime\mathbf{X})^{-1} + (\mathbf{X}^\prime\mathbf{X})^{-1}(D\mathbf{X})^\prime + D\mathbf{X}(\mathbf{X}^\prime\mathbf{X})^{-1} + DD^\prime\bigg)$$
+:::
+
+# OLS is BLUE
+
+:::{.incremental}
+
+- Using $D\mathbf{X} = 0$ from above along with the definition of the variance of $\hat{\beta}_{\text{OLS}}$
+
+  $$Var(\tilde{\beta}) = Var(\hat{\beta}_{\text{OLS}}) + \sigma^2DD^\prime$$
+  
+- The variance of our alternative linear, unbiased estimator exceeds the variance of OLS by the positive semi-definite matrix $\sigma^2DD^\prime$
+- Therefore OLS is the **lowest-variance** linear unbiased estimator
+
+:::
 
 # Classical regression
 
@@ -515,6 +612,38 @@ $$\epsilon | \mathbf{X} \sim \mathcal{N}(0, \sigma^2)$$
   - We almost never assume homoskedasticity because "robust" SE estimators are ubiquitous
   - Even some forms of error correlation are permitted ("cluster" robust SEs)
   - Sample sizes are usually large enough where Central Limit Theorem implies a normal sampling distribution is a reasonable approximation.
+
+:::
+
+# OLS by hand
+
+::: {.incremental}
+
+- Our point estimate
+
+```{r, echo=T}
+X <- cbind(1, election$pctWhiteNH)
+beta <- solve(t(X)%*%X)%*%t(X)%*%election$voteshare
+```
+
+- Our variance estimator
+
+```{r,  echo=T}
+err <- election$voteshare - X%*%beta
+sigma_2_hat <- (1/(nrow(X)-ncol(X)))*sum(err^2)
+vcov_beta <- sigma_2_hat*solve(t(X)%*%X)
+```
+
+- Results
+
+```{r,  echo=T}
+beta
+sqrt(diag(vcov_beta))
+```
+
+```{r,  echo=T}
+tidy(linreg)
+```
 
 :::
 
@@ -602,3 +731,306 @@ election$demeaned_x <- election$pctWhiteNH - election$pctWhiteNH_state
 
 tidy(lm(demeaned_y ~ demeaned_x, data=election)) %>% filter(term == "demeaned_x")
 ```
+
+# Statistical models
+
+# Defining a statistical model
+
+::: {.incremental}
+
+- In the regression setting we tried to make as few assumptions about the data-generating process as possible.
+  - Our goal is just to estimate and conduct inference on $E[Y|X]$.
+
+- But what if we wanted to make further probabilistic statements about other quantities beyond $\beta$
+  - (e.g.) Can we provide a distribution for $Y_{n+1}$, the "next" observation given $X_{n+1}$?
+  - If we're willing to make more assumptions about the data-generating process, we can do a lot more!
+
+- **Statistical models** specify the data-generating process in terms of *systematic* and *stochastic* components.
+  - **Systematic** elements are functions known constants and unknown *parameters*
+  - **Stochastic** elements are draws from probability distributions
+
+- We will be primarily working with *parametric* models
+  - The data will be assumed to come from a particular family of probability distributions
+  - The "structure" of the model is assumed fixed (the number of parameters does not grow with the size of the data).
+
+:::
+
+# The linear model
+
+::: {.incremental}
+
+- It is common to see the linear model written in its fully parametric form.
+- **Stochastic**:
+
+  $$Y_i \sim \text{Normal}(\mu_i, \sigma^2)$$
+
+- **Systematic**:
+
+  $$\mu_i = X_i^{\prime}\beta$$
+
+- What's assumed to be known?
+  - $\mathbf{X}$
+- What's assumed to have a particular distribution?
+  - $Y$
+- We are interested in estimating and conducting inference on the parameters: $\beta$ and (less importantly) $\sigma^2$.
+
+:::
+
+# General model notation
+
+::: {.incremental}
+
+- We can specify a broad set of models for $Y_i$ using this framework
+- **Stochastic**
+
+  $$Y_i \sim f(\theta_i, \alpha)$$
+
+- **Systematic**
+
+  $$\theta_i = g(X_i, \beta)$$
+
+- What are these quantities?
+  - $Y_i$ is a random variable
+  - $f()$ denotes the distribution of that random variable
+  - $\theta_i$ and $\alpha$ are parameters of that distribution
+  - $g()$ is some function 
+  - $X_i$ are observed, known constants (e.g. regressors)
+  - $\beta$ are parameters of interest 
+
+- We will spend some time with a particular class of models called "Generalized Linear Models" where the systematic component has the form
+
+  $$\theta_i = g(X_i^{\prime}\beta)$$
+
+:::
+
+# Types of distributions
+
+::: {.incremental}
+
+- **Normal**
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+norm_curve <- ggplot() + xlim(-5, 5) + geom_function(fun=dnorm) + theme_bw() + ylab("Density") + xlab("Value")
+norm_curve
+```
+
+
+- Continuous on an unbounded support $(-\infty, \infty)$
+- Two parameters: Mean $\mu$ and Variance $\sigma^2$
+
+- Probability Density Function (PDF)
+
+$$f_N(x;\mu, \sigma) = \frac{1}{\sigma\sqrt{2\pi}} \exp\left\{- \frac{1}{2}\left(\frac{x - \mu}{\sigma}\right)^2 \right\}$$
+
+:::
+
+# Types of distributions
+
+::: {.incremental}
+
+- **Poisson**
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+pois_curve <- data.frame(x=0:10) %>% ggplot(aes(x=x)) + xlim(0, 10) + geom_point(aes(y=dpois(x, lambda=1))) + theme_bw() + ylab("Probability") + xlab("Value")
+pois_curve
+```
+
+
+- Discrete, defined on the support of the natural numbers (positive integers + zero)
+- Single parameter: Mean and Variance $\lambda$ 
+
+
+- Probability Density Function (PDF)
+
+$$f(x; \lambda) = \frac{\lambda^x\exp\{-\lambda\}}{x!}$$
+
+:::
+
+# Types of distributions
+
+::: {.incremental}
+
+- **Binomial**
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+binom_curve <- data.frame(x=0:10) %>% ggplot(aes(x=x)) + xlim(0, 10) + geom_point(aes(y=dbinom(x, size=10, prob = .3))) + theme_bw() + ylab("Probability") + xlab("Value")
+binom_curve
+```
+
+- Discrete, defined on the support of integers from $\{0, 1, 2, \dotsc, n\}$ (model the sum of repeated i.i.d. coin flips.)
+- Two parameters: $p$ probability of success in $n$ trials
+  - Special case where $n=1$ trials is typically called the "Bernoulli"
+- Probability Density Function (PDF)
+
+$$f(x; p, n) = {n \choose x} p^x(1-p)^{n-x}$$
+
+:::
+
+# Likelihood inference
+
+# Learning about the unknown
+
+::: {.incremental}
+
+- Suppose that I want to learn about an unobserved parameter from a sample of observations.
+  - I *assume* a particular statistical model for the data
+  - **Example**: The linear model from earlier!
+
+- **Frequentist** approach
+  - Unobserved parameters are **fixed constants**
+  - Data are **random variables**
+
+- We want to construct an **estimator** that is a *function* of the data and which has desirable properties
+  - **Consistency**: As our sample size gets larger, the estimator converges (in probability) to the target parameter.
+  - **Asymptotic normality**: In large samples, the distribution of our estimator is normal (ideally with a variance we can estimate as well!)
+
+- Can we come up with a *generic* framework that yields a "good" estimator for a large class of statistical models?
+
+:::
+
+# The Likelihood Function
+
+::: {.incremental}
+
+- Consider data $\mathbf{y} = \{y_1, y_2, \dotsc, y_n\}$ which we assume comes from a known distribution with density $f(\mathbf{y} | \theta)$ with unknown parameter $\theta$
+  - $f()$ could be Bernoulli, Normal, Poisson, Gamma, Beta, etc... -- in this setting it is a *known* distribution
+  - $\theta$ is an *unknown* parameter that lies in some space $\Theta$ of possible values.
+
+- The **likelihood function** is a function of $\theta$ that is evaluated at the observed values of $\mathbf{y}$
+
+  $$\mathcal{L}(\theta| \mathbf{y}) = f(\mathbf{y} | \theta)$$
+
+- Given some *input* $\theta$, the likelihood function returns the density of the observed data evaluated at that value.
+
+- The likelihood function is **not** a probability density
+  - a pdf is a function that takes $x$ as an input
+  - a likelihood is a function that takes $\theta$ as an input
+  
+:::
+
+# The Likelihood Function
+
+::: {.incremental}
+
+- The likelihood function is **not** $f(\theta | \mathbf{y})$
+  - That statement doesn't even make sense in a frequentist framework - parameters are constant
+
+- Even when we (later) move to a *Bayesian* framework $f(\theta | \mathbf{y}) \neq f(\mathbf{y} | \theta)$
+
+- Remember Bayes' Rule:
+  
+  $$f(\theta | \mathbf{y}) = \frac{f(\mathbf{y} | \theta)}{f(\mathbf{y})} \times f(\theta)$$
+
+- Or alternatively, since $f(\mathbf{y})$ is just a normalizing constant, you'll see this written as:
+  
+  $$\underbrace{f(\theta | \mathbf{y})}_{\text{posterior}} \propto \underbrace{f(\mathbf{y}|\theta)}_{\text{likelihood}} \times \underbrace{f(\theta)}_{\text{prior}}$$
+
+:::
+
+# The Likelihood Function
+
+::: {.incremental}
+
+- We often make the assumption that our data are **independently and identically distributed**
+  - $y_i \underset{{\text{i.i.d}}}{\sim} f(y_i | \theta)$
+
+- This allows us to factor the likelihood 
+
+  $$\mathcal{L}(\theta|\mathbf{y}) = f(\mathbf{y} | \theta) = \prod_{i=1}^n f(y_i | \theta)$$
+
+- Since our eventual goal will be to find an *optimum* of the likelihood, we can apply any monotonic function to it since that preserves maxima/minima.
+  - The main one we'll apply is the **logarithm**
+  - Why? Because logs turn annoying-to-work-with products into easier-to-work-with sums!
+
+- The log-likelihood is typically denoted $\ell(\theta| \mathbf{y})$
+
+  $$\ell(\theta|\mathbf{y}) = \log f(\mathbf{y}|\theta) = \sum_{i=1}^n \log f(y_i | \theta)$$
+
+:::
+
+# MLE
+
+::: {.incremental}
+
+- We want to come up with an estimator $\hat{\theta}$ for the parameter $\theta$
+  - $\hat{\theta}$ is a function of the data (like a sample mean or OLS coefficient)
+  - Is there a principled way to pick $\hat{\theta}$ that has provably "good" properties across a wide variety of models?
+
+- The Maximum Likelihood Estimator (MLE) $\hat{\theta}$ is defined as the value of $\theta$ that yields the optimum value of the likelihood function
+
+$$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
+
+- Under i.i.d. observations, the MLE has some desirable properties:
+  - The MLE $\hat{\theta}$ is consistent for the true parameter $\theta$
+  - It's asymptotically normal: $\sqrt{n}(\hat{\theta} - \theta) \rightarrow \text{Normal}(0, \frac{1}{\mathcal{I}(\theta)})$
+  - It's asymptotically efficient: It's variance approaches the Cramer-Rao lower-bound $\frac{1}{n\mathcal{I}(\theta)}$
+
+:::
+
+# Score
+
+::: {.incremental}
+
+- Before illustrating consistency, we need to define some additional functions of the log-likelihood.
+- The first is the **score** or the gradient of $\ell(\theta|\mathbf{y})$ with respect to $\theta$
+
+  $$\mathbf{S} = \frac{\partial}{\partial\theta} \log f(\mathbf{y}|\theta)$$
+
+- With i.i.d. data, you'll often see the score written in terms of the score for an individual observation $i$
+
+  $$\mathbf{S}_i = \frac{\partial}{\partial\theta} \log f(y_i|\theta)$$
+
+
+- At the value of the true parameter $\theta_0$, the expected value of the score is $0$ (under some regularity conditions)
+
+  $$\mathbb{E}\bigg[\frac{\partial}{\partial\theta} \log f(y_i|\theta_0)\bigg] = \frac{\partial}{\partial\theta} \mathbb{E}[\log f(y_i|\theta_0)] = 0$$
+:::
+
+# Consistency
+
+::: {.incremental}
+
+- With this definition of the score, we can show consistency of the MLE under i.i.d. observations.
+- By the weak law of large numbers
+
+  $$\frac{1}{n} \sum_{i=1}^n \log f(y_i | \theta) \underset{p}{\rightarrow} \mathbb{E}[\log f(y_i | \theta)]$$
+
+- The MLE is an optimizer of the left-hand side.
+  - Therefore it converges in probability to the optimizer of the right-hand side
+
+- And we just showed that the score is $0$ at the true value of $\theta$, denoted $\theta_0$
+  - Therefore $\theta_0$ is an extremum of the right-hand side (under a few additional regularity conditions)
+
+- Therefore the MLE $\hat{\theta}$ is consistent for the true value $\theta_0$
+
+:::
+
+# Consistency
+
+::: {.incremental}
+
+- There are two important conditions for consistency that can be violated in practice
+- **Identifiability**
+  - No "plateaus" in the log-likelihood.
+  - Two different values of $\theta$ can't both maximize the log-likelihood
+  
+  $$f(\mathbf{y}|\theta) \neq f(\mathbf{y} | \theta_0) \ \forall \ \theta \neq \theta_0$$ 
+  
+- **Fixed parameter space**
+  - The dimensionality of $\theta$ stays fixed and does not depend on $n$
+  - Violated (e.g.) in ideal point models (new legislators mean new ideal points)
+
+:::
+
+# Next week!
+
+::: {.incremental}
+
+- More on likelihood inference theory!
+  - Asymptotic Normality
+  - Sampling variance of the MLE
+  - Cramer-Rao Lower Bound
+- Generalized Linear Models
+  - Extending the tools of "linear regression" to other outcome distributions.
+
+:::
