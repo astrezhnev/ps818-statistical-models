@@ -1,0 +1,618 @@
+---
+title: "Week 3: Intro to Likelihood Inference"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "September 8, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: false
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+
+---
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(broom)
+options(digits=3)
+```
+
+# Previously
+
+::: {.incremental}
+- Linear regression
+  - "Agnostic" regression and the "Best Linear Predictor"
+  - "Classical" OLS regression theory
+
+- Key intuitions
+  - Regression as a **projection** of $Y$ into the column space of $\mathbf{X}$
+  - Frisch-Waugh-Lovell theorem
+
+:::
+
+# This week
+
+::: {.incremental}
+
+- What is a **statistical model**?
+- What is a **likelihood**?
+- Properties of the **maximum likelihood estimator**
+
+:::
+
+# Statistical models
+
+# Defining a statistical model
+
+::: {.incremental}
+
+- In the regression setting we tried to make as few assumptions about the data-generating process as possible.
+  - Our goal is just to estimate and conduct inference on $E[Y|X]$.
+
+- But what if we wanted to make further probabilistic statements about other quantities beyond $\beta$
+  - (e.g.) Can we provide a distribution for $Y_{n+1}$, the "next" observation given $X_{n+1}$?
+  - If we're willing to make more assumptions about the data-generating process, we can do a lot more!
+
+- **Statistical models** specify the data-generating process in terms of *systematic* and *stochastic* components.
+  - **Systematic** elements are functions known constants and unknown *parameters*
+  - **Stochastic** elements are draws from probability distributions
+
+- We will be primarily working with *parametric* models
+  - The data will be assumed to come from a particular family of probability distributions
+  - The "structure" of the model is assumed fixed (the number of parameters does not grow with the size of the data).
+
+:::
+
+# The linear model
+
+::: {.incremental}
+
+- It is common to see the linear model written in its fully parametric form.
+- **Stochastic**:
+
+  $$Y_i \sim \text{Normal}(\mu_i, \sigma^2)$$
+
+- **Systematic**:
+
+  $$\mu_i = X_i^{\prime}\beta$$
+
+- What's assumed to be known?
+  - $\mathbf{X}$
+- What's assumed to have a particular distribution?
+  - $Y$
+- We are interested in estimating and conducting inference on the parameters: $\beta$ and (less importantly) $\sigma^2$.
+
+:::
+
+# General model notation
+
+::: {.incremental}
+
+- We can specify a broad set of models for $Y_i$ using this framework
+- **Stochastic**
+
+  $$Y_i \sim f(\theta_i, \alpha)$$
+
+- **Systematic**
+
+  $$\theta_i = g(X_i, \beta)$$
+
+- What are these quantities?
+  - $Y_i$ is a random variable
+  - $f()$ denotes the distribution of that random variable
+  - $\theta_i$ and $\alpha$ are parameters of that distribution
+  - $g()$ is some function 
+  - $X_i$ are observed, known constants (e.g. regressors)
+  - $\beta$ are parameters of interest 
+
+- We will spend some time with a particular class of models called "Generalized Linear Models" where the systematic component has the form
+
+  $$\theta_i = g(X_i^{\prime}\beta)$$
+
+:::
+
+# Types of distributions
+
+::: {.incremental}
+
+- **Normal**
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+norm_curve <- ggplot() + xlim(-5, 5) + geom_function(fun=dnorm) + theme_bw() + ylab("Density") + xlab("Value")
+norm_curve
+```
+
+- Continuous on an unbounded support $(-\infty, \infty)$
+- Two parameters: Mean $\mu$ and Variance $\sigma^2$
+
+- Probability Density Function (PDF)
+
+$$f_N(x;\mu, \sigma) = \frac{1}{\sigma\sqrt{2\pi}} \exp\left\{- \frac{1}{2}\left(\frac{x - \mu}{\sigma}\right)^2 \right\}$$
+
+:::
+
+# Types of distributions
+
+::: {.incremental}
+
+- **Poisson**
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+pois_curve <- data.frame(x=0:10) %>% ggplot(aes(x=x)) + xlim(0, 10) + geom_point(aes(y=dpois(x, lambda=1))) + theme_bw() + ylab("Probability") + xlab("Value")
+pois_curve
+```
+
+
+- Discrete, defined on the support of the natural numbers (positive integers + zero)
+- Single parameter: Mean and Variance $\lambda$ 
+
+
+- Probability Density Function (PDF)
+
+$$f(x; \lambda) = \frac{\lambda^x\exp\{-\lambda\}}{x!}$$
+
+:::
+
+# Types of distributions
+
+::: {.incremental}
+
+- **Binomial**
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+binom_curve <- data.frame(x=0:10) %>% ggplot(aes(x=x)) + xlim(0, 10) + geom_point(aes(y=dbinom(x, size=10, prob = .3))) + theme_bw() + ylab("Probability") + xlab("Value")
+binom_curve
+```
+
+- Discrete, defined on the support of integers from $\{0, 1, 2, \dotsc, n\}$ (model the sum of repeated i.i.d. coin flips.)
+- Two parameters: $p$ probability of success in $n$ trials
+  - Special case where $n=1$ trials is typically called the "Bernoulli"
+- Probability Density Function (PDF)
+
+$$f(x; p, n) = {n \choose x} p^x(1-p)^{n-x}$$
+
+:::
+
+# Likelihood inference
+
+# Learning about the unknown
+
+::: {.incremental}
+
+- Suppose that I want to learn about an unobserved parameter from a sample of observations.
+  - I *assume* a particular statistical model for the data
+  - **Example**: The linear model from earlier!
+
+- **Frequentist** approach
+  - Unobserved parameters are **fixed constants**
+  - Data are **random variables**
+
+- We want to construct an **estimator** that is a *function* of the data and which has desirable properties
+  - **Consistency**: As our sample size gets larger, the estimator converges (in probability) to the target parameter.
+  - **Asymptotic normality**: In large samples, the distribution of our estimator is normal (ideally with a variance we can estimate as well!)
+
+- Can we come up with a *generic* framework that yields a "good" estimator for a large class of statistical models?
+
+:::
+
+# The Likelihood Function
+
+::: {.incremental}
+
+- Consider data $\mathbf{y} = \{y_1, y_2, \dotsc, y_n\}$ which we assume comes from a known distribution with density $f(\mathbf{y} | \theta)$ with unknown parameter $\theta$
+  - $f()$ could be Bernoulli, Normal, Poisson, Gamma, Beta, etc... -- in this setting it is a *known* distribution
+  - $\theta$ is an *unknown* parameter that lies in some space $\Theta$ of possible values.
+
+- The **likelihood function** is a function of $\theta$ that is evaluated at the observed values of $\mathbf{y}$
+
+  $$\mathcal{L}(\theta| \mathbf{y}) = f(\mathbf{y} | \theta)$$
+
+- Given some *input* $\theta$, the likelihood function returns the density of the observed data evaluated at that value.
+
+- The likelihood function is **not** a probability density
+  - a pdf is a function that takes $x$ as an input
+  - a likelihood is a function that takes $\theta$ as an input
+  
+:::
+
+# The Likelihood Function
+
+::: {.incremental}
+
+- The likelihood function is **not** $f(\theta | \mathbf{y})$
+  - That statement doesn't even make sense in a frequentist framework - parameters are constant
+
+- Even when we (later) move to a *Bayesian* framework $f(\theta | \mathbf{y}) \neq f(\mathbf{y} | \theta)$
+
+- Remember Bayes' Rule:
+  
+  $$f(\theta | \mathbf{y}) = \frac{f(\mathbf{y} | \theta)}{f(\mathbf{y})} \times f(\theta)$$
+
+- Or alternatively, since $f(\mathbf{y})$ is just a normalizing constant, you'll see this written as:
+  
+  $$\underbrace{f(\theta | \mathbf{y})}_{\text{posterior}} \propto \underbrace{f(\mathbf{y}|\theta)}_{\text{likelihood}} \times \underbrace{f(\theta)}_{\text{prior}}$$
+
+:::
+
+# The Likelihood Function
+
+::: {.incremental}
+
+- We often make the assumption that our data are **independently and identically distributed**
+  - $y_i \underset{{\text{i.i.d}}}{\sim} f(y_i | \theta)$
+
+- This allows us to factor the likelihood 
+
+  $$\mathcal{L}(\theta|\mathbf{y}) = f(\mathbf{y} | \theta) = \prod_{i=1}^n f(y_i | \theta)$$
+
+- Since our eventual goal will be to find an *optimum* of the likelihood, we can apply any monotonic function to it since that preserves maxima/minima.
+  - The main one we'll apply is the **logarithm**
+  - Why? Because logs turn annoying-to-work-with products into easier-to-work-with sums!
+
+- The log-likelihood is typically denoted $\ell(\theta| \mathbf{y})$
+
+  $$\ell(\theta|\mathbf{y}) = \log f(\mathbf{y}|\theta) = \sum_{i=1}^n \log f(y_i | \theta)$$
+
+:::
+
+# MLE
+
+::: {.incremental}
+
+- We want to come up with an estimator $\hat{\theta}$ for the parameter $\theta$
+  - $\hat{\theta}$ is a function of the data (like a sample mean or OLS coefficient)
+  - Is there a principled way to pick $\hat{\theta}$ that has provably "good" properties across a wide variety of models?
+
+- The Maximum Likelihood Estimator (MLE) $\hat{\theta}$ is defined as the value of $\theta$ that yields the optimum value of the likelihood function
+
+$$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
+
+- Under i.i.d. observations, the MLE has some desirable properties:
+  - The MLE $\hat{\theta}$ is consistent for the true parameter $\theta$
+  - It's asymptotically normal: $\sqrt{n}(\hat{\theta} - \theta) \rightarrow \text{Normal}(0, \frac{1}{\mathcal{I}(\theta)})$
+  - It's asymptotically efficient: It's variance approaches the Cramer-Rao lower-bound $\frac{1}{n\mathcal{I}(\theta)}$
+
+:::
+
+# Score
+
+::: {.incremental}
+
+- Before illustrating consistency, we need to define some additional functions of the log-likelihood.
+- The first is the **score** or the gradient of $\ell(\theta|\mathbf{y})$ with respect to $\theta$
+
+  $$\ell^\prime(\theta|\mathbf{y}) = \frac{\partial}{\partial\theta} \log f(\mathbf{y}|\theta)$$
+
+- With i.i.d. data, you'll often see the likelihood and score written as a mean over the individual likelihoods
+
+  $$\ell(\theta|\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n \log f(y_i|\theta)$$
+
+  $$\ell^\prime(\theta|\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n\frac{\partial}{\partial\theta} \log f(y_i|\theta)$$
+
+
+- At the value of the true parameter $\theta_0$, the **expected value** of the score is $0$ (under some regularity conditions)
+
+  $$\mathbb{E}\bigg[\frac{\partial}{\partial\theta} \log f(y_i|\theta_0)\bigg] = \frac{\partial}{\partial\theta} \mathbb{E}[\log f(y_i|\theta_0)] = 0$$
+  
+:::
+
+# Illustration: The Normal Model
+
+::: {.incremental}
+
+- Let's consider the classical **normal regression** model with homoskedastic errors
+
+   $$y_i \sim \text{Normal}(\mu_i, \sigma^2)$$
+   $$\mu_i = x_i^{\prime}\beta$$
+- Write down the log-likelihood
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) = \log\bigg(f(\mathbf{y} | \beta, \sigma^2)\bigg)$$
+- Under i.i.d. the joint density of $\mathbf{Y}$ factors into the marginal densities
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) = \log\bigg(\prod_{i=1}^n f(y_i| \beta, \sigma^2)\bigg)$$
+
+:::
+
+# Illustration: The Normal Model
+
+::: {.incremental}
+
+- Properties of logs
+  
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) = \sum_{i=1}^n \log f(y_i| \beta, \sigma^2)$$
+
+- Plug in the Normal density for each observation
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) = \sum_{i=1}^n \log \bigg[\frac{1}{\sigma\sqrt{2\pi}} \exp\left\{- \frac{1}{2}\left(\frac{y_i - x_i^\prime\beta}{\sigma}\right)^2 \right\}\bigg]$$
+  
+- Properties of logs
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) = \sum_{i=1}^n -\log(\sigma) - \log(2\pi) + \log\bigg[\exp\bigg\{-\frac{1}{2}\bigg(\frac{y_i - x_i^\prime\beta}{\sigma}\bigg)^2\bigg\}\bigg]$$
+  
+:::
+
+# Illustration: The Normal Model
+
+::: {.incremental}
+
+- Drop additive constants; log is the inverse of exp
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) = \sum_{i=1}^n -\log(\sigma) -\frac{1}{2}\bigg(\frac{y_i - x_i^\prime\beta}{\sigma}\bigg)^2$$
+  
+- Algebra
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) =  -\frac{1}{2\sigma^2} \sum_{i=1}^n (y_i - x_i^\prime\beta)^2 -n\log(\sigma)$$
+
+- What's familiar here?
+  - The objective function is the sum of squared residuals!
+  - We know the solution already - it's OLS.
+
+:::
+  
+# Consistency
+
+::: {.incremental}
+
+- With this definition of the score, we can show consistency of the MLE under i.i.d. observations.
+- By the weak law of large numbers
+
+  $$\frac{1}{n} \sum_{i=1}^n \log f(y_i | \theta) \underset{p}{\rightarrow} \mathbb{E}[\log f(y_i | \theta)]$$
+
+- The MLE is an optimizer of the left-hand side.
+  - Therefore it converges in probability to the optimizer of the right-hand side
+
+- And we just showed that the expectation of the score is $0$ at the true value of $\theta$, denoted $\theta_0$
+  - Therefore $\theta_0$ is the optimizer of the right-hand side
+
+- Therefore the MLE $\hat{\theta}$ is consistent for the true value $\theta_0$
+
+:::
+
+# Consistency
+
+::: {.incremental}
+
+- Note a few important conditions for identification
+
+- **Identifiability**
+  - No "plateaus" in the log-likelihood.
+  - Two different values of $\theta$ can't both maximize the log-likelihood
+  
+  $$f(\mathbf{y}|\theta) \neq f(\mathbf{y} | \theta_0) \ \forall \ \theta \neq \theta_0$$ 
+  
+- **Fixed parameter space**
+  - The dimensionality of $\theta$ stays fixed and does not depend on $n$
+  - Violated (e.g.) in ideal point models (new legislators mean new ideal points)
+
+- $\theta_0$ is in the **interior** of the parameter space
+
+:::
+
+# Information
+
+::: {.incremental}
+
+- Having established consistency, we're interested in understanding the variance and distribution (asymptotically) of $\hat{\theta}$ 
+  - To do this, we need to define a quantity called the **information**: $\mathcal{I}_n$
+  - This is equivalent to the variance of the score at its optimum
+
+  $$\mathcal{I}_n = \mathbb{E}\left[\left(\frac{\partial}{\partial\theta} \log f(\mathbf{y}|\theta_0)\right)^2\right]$$
+
+- We can show (under some more regularity conditions) that this can be written as the negative expectation of the second-order partial derivative (Hessian) of the log-likelihood
+
+  $$\mathcal{I}_n = -\mathbb{E}\left[\frac{\partial^2}{\partial\theta^2} \log f(\mathbf{y}|\theta_0)\right]$$
+
+- **Intuitively**: Captures the curvature of the log-likelihood at its maximum
+
+:::
+
+
+# Information
+
+- You'll sometimes see the information written in terms of a single observation
+
+  $$\mathcal{I} =  -\mathbb{E}\left[\frac{\partial^2}{\partial\theta^2} \log f(y_i|\theta_0)\right]$$
+
+- Under our i.i.d. assumption, we can write
+
+  $$\mathcal{I_n} = n\mathcal{I}$$
+
+- This matters for how we write/show consistency of the MLE
+
+# Asymptotic distribution
+
+- Next, we can show that in large samples, the MLE under i.i.d. observations converges to a normal distribution with a known variance (the inverse Fisher information)
+
+ $$\sqrt{n}(\hat{\theta} - \theta) \overset{d}{\rightarrow} \text{Normal}(0, \mathcal{I}^{-1})$$
+ 
+- We'll write the "normalized" likelihood under i.i.d.
+
+  $$\ell(\theta|\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n \log f_i(y_i | \theta)$$
+
+- And the score
+
+  $$\ell^{\prime}(\theta|\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n \frac{\partial}{\partial \theta} \log f_i(Y_i | \theta)$$
+
+- And the Hessian
+
+  $$\ell^{\prime\prime}(\theta|\mathbf{y}) = \frac{1}{n} \sum_{i=1}^n \frac{\partial^{2}}{\partial \theta^{2}}  \log f_i(Y_i | \theta)$$
+
+# Asymptotic distribution
+
+- Our first step will be to take a first-order **taylor approximation** of the score function around the true MLE $\theta_0$ and write it as a function of our estimator $\hat{\theta}$
+
+  $$\ell^{\prime}(\hat{\theta}|\mathbf{y}) = \ell^{\prime}(\theta_0 | \mathbf{y}) + \ell^{\prime\prime}(\theta_0|\mathbf{y})(\hat{\theta} - \theta_0)$$
+  
+- Using the fact that the score is zero at the MLE, we have
+
+  $$0 = \ell^{\prime}(\theta_0 | \mathbf{y}) + \ell^{\prime\prime}(\theta_0|\mathbf{y})(\hat{\theta} - \theta_0)$$
+- Rearranging gives
+
+$$(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})]^{-1}\ell^{\prime}(\theta_0|\mathbf{y})$$
+
+- Multiplying by $\sqrt{n}$
+
+$$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})]^{-1}[\sqrt{n}\ell^{\prime}(\theta_0|\mathbf{y})]$$
+
+# Asymptotic distribution
+
+- First, by law of large numbers, 
+
+  $$-\ell^{\prime\prime}(\theta_0|\mathbf{y}) = -\frac{1}{n} \sum_{i=1}^n \frac{\partial^2}{\partial\theta^2} \log f(y_i|\theta_0) \overset{p}{\to}  -\mathbb{E}\left[\frac{\partial^2}{\partial\theta^2} \log f(y_i|\theta_0)\right] = \mathcal{I}$$
+  
+- Second, by the central limit theorem
+
+  $$\sqrt{n} \ell^{\prime}(\theta_0 | \mathbf{y}) = \frac{1}{\sqrt{n}} \sum_{i=1}^n \frac{\partial}{\partial\theta} \log f(y_i | \theta_0) \overset{d}{\to} \mathcal{N}\bigg(0, Var\bigg( \frac{\partial}{\partial\theta} \log f(y_i | \theta_0)\bigg)\bigg) = \mathcal{N}(0, \mathcal{I})$$
+  
+- Lastly, by Slutsky's theorem (limit of a function is a function of the limits)
+
+  $$\sqrt{n}(\hat{\theta} - \theta_0) \overset{d}{\to} \mathcal{N}(0, \mathcal{I}^{-1})$$
+  
+# Asymptotic distribution
+
+- So in large samples, the MLE is approximately normally distributed, centered at the true parameter $\theta_0$ and with a variance equal to the **inverse** of the information
+
+  $$\hat{\theta} \sim \mathcal{N}(\theta_0, \mathcal{I}_n^{-1})$$
+
+- Can another estimator do better asymptotically?
+  - It turns out the answer is **no** 
+  - The MLE is also asymptotically the most efficient unbiased estimator since its asymptotic variance is equal to the **Cramér–Rao lower bound**
+
+# Cramér–Rao lower bound (CRLB)
+
+- An important result in statistics relates to the smallest possible variance that an **unbiased** estimator could reach
+  - That is, if we're not willing to accept more **bias**, how much **precision** can we squeeze out of the data?
+  - This ends up being related to the information!
+
+- The **Cramér–Rao lower bound** on the variance of any unbiased estimator of $\theta$, $\hat{\theta}$ is
+
+  $$Var(\hat{\theta}) \ge (\mathcal{I}_n)^{-1}$$
+  
+  
+# Cramér–Rao lower bound (CRLB)
+
+- Consider what **unbiasedness** gets us:
+
+  $$\mathbb{E}[\hat{\theta} - \theta] = \int(\hat{\theta} - \theta) f(\mathbf{y}| \theta)d\mathbf{y} = 0$$
+  
+- Since unbiasedness is true for every value of $\theta$, differentiating with respect to $\theta$ should also give us 0
+
+  $$\frac{\partial}{\partial\theta} \int(\hat{\theta} - \theta) f(\mathbf{y} |\theta)d\mathbf{y} = 0$$
+  
+- Under the conditions that let us exchange differentiation and integration
+  
+  $$ \int \frac{\partial}{\partial\theta} \bigg((\hat{\theta} - \theta) f(\mathbf{y}| \theta)\bigg)d\mathbf{y} = 0$$
+  
+# Cramér–Rao lower bound (CRLB)
+
+- Product Rule
+  
+  $$\int  \bigg((\hat{\theta} - \theta) \frac{\partial}{\partial\theta} f(\mathbf{y}| \theta)\bigg)d\mathbf{y} - \int  f(\mathbf{y}| \theta)d\mathbf{y} = 0$$
+
+- PDFs integrate to 1 over their support
+
+  $$\int  \bigg((\hat{\theta} - \theta) \frac{\partial}{\partial\theta} f(\mathbf{y}| \theta)\bigg)d\mathbf{y} = 1$$
+  
+- We can write $\frac{\partial}{\partial \theta} f(\mathbf{y}| \theta)$ in terms of the **log** density (via chain rule)
+
+  $$\frac{\partial}{\partial \theta} f(\mathbf{y}; \theta) = f(\mathbf{y}| \theta) \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)$$
+  
+# Cramér–Rao lower bound (CRLB)
+
+- Plugging back in!
+
+  $$\int  \bigg((\hat{\theta} - \theta)  \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg)f(\mathbf{y}| \theta)d\mathbf{y} = 1$$
+
+- "Law of the unconscious statistician" (definition of expectations of functions)
+
+$$\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg] = 1$$
+
+- Square both sides
+
+$$\bigg|\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg]\bigg|^2 = 1$$
+
+
+# Cramér–Rao lower bound (CRLB)
+
+- (One formulation of) the **Cauchy-Schwarz Inequality** for expectations states that for two random variables $X$ and $Y$
+
+  $$|\mathbb{E}[XY]|^2 \le \mathbb{E}(X^2)\mathbb{E}(Y^2)$$
+  
+- Therefore, by **Cauchy-Schwarz**
+
+  $$\mathbb{E}[(\hat{\theta} - \theta)^2] \times \mathbb{E}\bigg[\bigg(\frac{\partial}{\partial \theta} \log f(\mathbf{y}|\theta)\bigg)^2\bigg] \ge 1$$
+  
+- First term is the variance of an unbiased estimator (MSE). Second term is the information. Rearranging gives us the CRLB
+
+  $$Var(\hat{\theta}) \ge \frac{1}{\mathcal{I}_n}$$
+
+# Asymptotic normality
+
+- Under our i.i.d. assumption (+ regularity conditions), the Central Limit Theorem lets us show that the MLE is asymptotically normal
+
+  $$\sqrt{n}(\hat{\theta} - \theta) \overset{d}{\rightarrow} \text{Normal}(0, \mathcal{I}^{-1})$$
+  
+- The key intuition is again from the fact that we can write the 
+
+
+- So in large samples, a good approximation of the variance of $\hat{\theta}$ is $\mathcal{I}_n^{-1}$
+  - An additional result: The inverse of the information is the lowest possible variance of any unbiased estimator (**Cramér-Rao lower bound**) 
+  - MLE achieves this bound asymptotically
+
+
+- How do we do inference then? Same way as before -- plug in a consistent estimator of $\mathcal{I}_n^{-1}$.
+  - Calculate the hessian of the log-likelihood at the MLE and take the inverse of its negative.
+
+# Illustration: The Normal Model
+
+# Conclusion
+
+- **Statistical models**
+  - Describe the data-generating process in terms of *systematic* and *stochastic* components
+  - In a parametric model, we assume the data $\mathbf{y}$ come from a known *distribution* with unknown parameters $\theta$
+
+- **Likelihood**
+  - A function of $\theta$ evaluated at the observed data $\mathbf{y}$ equal to $f(\mathbf{y}|\theta)$
+  - How "likely" are my observed results in a world where the true DGP parameter were $\theta$.
+  - Not $f(\theta|\mathbf{y})$. That quantity only makes sense in the Bayesian context and requires us to formulate a prior $f(\theta)$
+
+- **Maximum Likelihood Estimator**
+  - A *technique* to come up with a **good** estimator in any case where we can write down a (well-behaved) likelihood function for a DGP
+  - Still a "function" of the data, but that function has useful properties:
+    - Consistency, Asymptotic Normality, Asymptotic Efficiency
+    
+---
