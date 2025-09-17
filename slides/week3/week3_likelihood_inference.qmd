@@ -104,16 +104,16 @@ options(digits=3)
 - It is common to see the linear model written in its fully parametric form.
 - **Stochastic**:
 
-  $$Y_i \sim \text{Normal}(\mu_i, \sigma^2)$$
+  $$y_i \sim \text{Normal}(\mu_i, \sigma^2)$$
 
 - **Systematic**:
 
-  $$\mu_i = X_i^{\prime}\beta$$
+  $$\mu_i = x_i^{\prime}\beta$$
 
 - What's assumed to be known?
-  - $\mathbf{X}$
+  - $\mathbf{x}$
 - What's assumed to have a particular distribution?
-  - $Y$
+  - $y$
 - We are interested in estimating and conducting inference on the parameters: $\beta$ and (less importantly) $\sigma^2$.
 
 :::
@@ -159,9 +159,7 @@ norm_curve
 - Continuous on an unbounded support $(-\infty, \infty)$
 - Two parameters: Mean $\mu$ and Variance $\sigma^2$
 
-- Probability Density Function (PDF)
-
-$$f_N(x;\mu, \sigma) = \frac{1}{\sigma\sqrt{2\pi}} \exp\left\{- \frac{1}{2}\left(\frac{x - \mu}{\sigma}\right)^2 \right\}$$
+  $$f_N(x;\mu, \sigma) = \frac{1}{\sigma\sqrt{2\pi}} \exp\left\{- \frac{1}{2}\left(\frac{x - \mu}{\sigma}\right)^2 \right\}$$
 
 :::
 
@@ -180,10 +178,7 @@ pois_curve
 - Discrete, defined on the support of the natural numbers (positive integers + zero)
 - Single parameter: Mean and Variance $\lambda$ 
 
-
-- Probability Density Function (PDF)
-
-$$f(x; \lambda) = \frac{\lambda^x\exp\{-\lambda\}}{x!}$$
+  $$f(x; \lambda) = \frac{\lambda^x\exp\{-\lambda\}}{x!}$$
 
 :::
 
@@ -201,9 +196,8 @@ binom_curve
 - Discrete, defined on the support of integers from $\{0, 1, 2, \dotsc, n\}$ (model the sum of repeated i.i.d. coin flips.)
 - Two parameters: $p$ probability of success in $n$ trials
   - Special case where $n=1$ trials is typically called the "Bernoulli"
-- Probability Density Function (PDF)
-
-$$f(x; p, n) = {n \choose x} p^x(1-p)^{n-x}$$
+  
+  $$f(x; p, n) = {n \choose x} p^x(1-p)^{n-x}$$
 
 :::
 
@@ -322,7 +316,12 @@ $$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
   $$\ell(\theta|\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n \log f(y_i|\theta)$$
 
   $$\ell^\prime(\theta|\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n\frac{\partial}{\partial\theta} \log f(y_i|\theta)$$
+  
+:::
 
+# Score
+
+::: {.incremental}
 
 - At the value of the true parameter $\theta_0$, the **expected value** of the score is $0$ (under some regularity conditions)
 
@@ -376,6 +375,10 @@ $$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
 - Algebra
 
   $$\ell(\beta, \sigma^2 | \mathbf{y}) =  -\frac{1}{2\sigma^2} \sum_{i=1}^n (y_i - x_i^\prime\beta)^2 -n\log(\sigma)$$
+  
+- Or alternatively
+
+  $$\ell(\beta, \sigma^2 | \mathbf{y}) =  \frac{1}{n} \sum_{i=1}^n  \bigg[-\frac{1}{2\sigma^2} (y_i - x_i^\prime\beta)^2 - \log(\sigma)\bigg]$$
 
 - What's familiar here?
   - The objective function is the sum of squared residuals!
@@ -422,6 +425,67 @@ $$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
 
 :::
 
+# Illustration: The Normal Model
+
+- Let's implement the Normal MLE from scratch
+
+```{r, message=F}
+election <- read_csv("data/prez_election_2016_vote.csv")
+election$voteshare <- 100*(election$candidatevotes/election$totalvotes)
+election <- election %>% filter(!is.na(voteshare)&!is.na(pctWhiteNH))
+election$voteshare_norm <- (election$voteshare - mean(election$voteshare))/sd(election$voteshare)
+election$pctWhiteNH_norm <- (election$pctWhiteNH - mean(election$voteshare))/sd(election$voteshare)
+```
+
+- Start by writing a function that returns the log-likelihood (evaluated at each observation)
+
+```{r, echo=T}
+norm_loglik <- function(pars, Y, X){
+  beta <- pars[-length(pars)]
+  sigma <- exp(pars[length(pars)]) # Enforce positive value
+  return(-(1/(2*(sigma^2)))*(Y - X%*%beta)^2 - log(sigma))
+}
+```
+
+- We'll use the `maxLik` package which includes some useful bindings to the built-in R optimization routines
+
+```{r, echo=T}
+library(maxLik)
+X_matrix <- model.matrix(voteshare ~ pctWhiteNH, data=election)
+```
+
+# Illustration: The Normal Model
+
+- The `maxLik` function takes as input a function whose first argument is a vector of the parameters being optimized over.
+
+```{r, echo=T}
+estimates <- maxLik(norm_loglik, start = c(rep(0, ncol(X_matrix)), exp(1)),
+                   method="NR", # Newton-Raphson optimization
+                   Y = election$voteshare,
+                   X = X_matrix)
+print(estimates)
+```
+
+# Illustration: The Normal Model
+
+- Let's pull the estimates and compare them to OLS!
+
+```{r, echo=T}
+beta_MLE <- estimates$estimate[-length(estimates$estimate)]
+sigma_MLE <- exp(estimates$estimate[length(estimates$estimate)])
+print(beta_MLE)
+```
+
+```{r, echo=T}
+ols_est <- lm(voteshare ~ pctWhiteNH, data=election)
+print(ols_est)
+```
+
+```{r, echo=T}
+sigma_MLE
+sqrt((1/ols_est$df)*sum(residuals(ols_est)^2))
+```
+
 # Information
 
 ::: {.incremental}
@@ -443,6 +507,8 @@ $$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
 
 # Information
 
+::: {.incremental}
+
 - You'll sometimes see the information written in terms of a single observation
 
   $$\mathcal{I} =  -\mathbb{E}\left[\frac{\partial^2}{\partial\theta^2} \log f(y_i|\theta_0)\right]$$
@@ -451,13 +517,15 @@ $$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
 
   $$\mathcal{I_n} = n\mathcal{I}$$
 
-- This matters for how we write/show consistency of the MLE
+:::
 
 # Asymptotic distribution
 
+::: {.incremental}
+
 - Next, we can show that in large samples, the MLE under i.i.d. observations converges to a normal distribution with a known variance (the inverse Fisher information)
 
- $$\sqrt{n}(\hat{\theta} - \theta) \overset{d}{\rightarrow} \text{Normal}(0, \mathcal{I}^{-1})$$
+  $$\sqrt{n}(\hat{\theta} - \theta) \overset{d}{\rightarrow} \text{Normal}(0, \mathcal{I}^{-1})$$
  
 - We'll write the "normalized" likelihood under i.i.d.
 
@@ -471,24 +539,31 @@ $$\hat{\theta} = \argmax_\theta \ \log f(\mathbf{y}|\theta)$$
 
   $$\ell^{\prime\prime}(\theta|\mathbf{y}) = \frac{1}{n} \sum_{i=1}^n \frac{\partial^{2}}{\partial \theta^{2}}  \log f_i(Y_i | \theta)$$
 
+:::
+
 # Asymptotic distribution
+
+::: {.incremental}
 
 - Our first step will be to take a first-order **taylor approximation** of the score function around the true MLE $\theta_0$ and write it as a function of our estimator $\hat{\theta}$
 
-  $$\ell^{\prime}(\hat{\theta}|\mathbf{y}) = \ell^{\prime}(\theta_0 | \mathbf{y}) + \ell^{\prime\prime}(\theta_0|\mathbf{y})(\hat{\theta} - \theta_0)$$
+  $$\ell^{\prime}(\hat{\theta}|\mathbf{y}) \approx \ell^{\prime}(\theta_0 | \mathbf{y}) + \ell^{\prime\prime}(\theta_0|\mathbf{y})(\hat{\theta} - \theta_0)$$
   
 - Using the fact that the score is zero at the MLE, we have
 
   $$0 = \ell^{\prime}(\theta_0 | \mathbf{y}) + \ell^{\prime\prime}(\theta_0|\mathbf{y})(\hat{\theta} - \theta_0)$$
 - Rearranging gives
 
-$$(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})]^{-1}\ell^{\prime}(\theta_0|\mathbf{y})$$
+  $$(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})]^{-1}\ell^{\prime}(\theta_0|\mathbf{y})$$
 
 - Multiplying by $\sqrt{n}$
 
-$$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})]^{-1}[\sqrt{n}\ell^{\prime}(\theta_0|\mathbf{y})]$$
+  $$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})]^{-1}[\sqrt{n}\ell^{\prime}(\theta_0|\mathbf{y})]$$
+:::
 
 # Asymptotic distribution
+
+::: {.incremental}
 
 - First, by law of large numbers, 
 
@@ -498,11 +573,15 @@ $$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})
 
   $$\sqrt{n} \ell^{\prime}(\theta_0 | \mathbf{y}) = \frac{1}{\sqrt{n}} \sum_{i=1}^n \frac{\partial}{\partial\theta} \log f(y_i | \theta_0) \overset{d}{\to} \mathcal{N}\bigg(0, Var\bigg( \frac{\partial}{\partial\theta} \log f(y_i | \theta_0)\bigg)\bigg) = \mathcal{N}(0, \mathcal{I})$$
   
-- Lastly, by Slutsky's theorem (limit of a function is a function of the limits)
+- Lastly, by Slutsky's theorem
 
   $$\sqrt{n}(\hat{\theta} - \theta_0) \overset{d}{\to} \mathcal{N}(0, \mathcal{I}^{-1})$$
   
+:::
+
 # Asymptotic distribution
+
+::: {.incremental}
 
 - So in large samples, the MLE is approximately normally distributed, centered at the true parameter $\theta_0$ and with a variance equal to the **inverse** of the information
 
@@ -512,7 +591,11 @@ $$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})
   - It turns out the answer is **no** 
   - The MLE is also asymptotically the most efficient unbiased estimator since its asymptotic variance is equal to the **Cramér–Rao lower bound**
 
+:::
+
 # Cramér–Rao lower bound (CRLB)
+
+::: {.incremental}
 
 - An important result in statistics relates to the smallest possible variance that an **unbiased** estimator could reach
   - That is, if we're not willing to accept more **bias**, how much **precision** can we squeeze out of the data?
@@ -521,23 +604,30 @@ $$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})
 - The **Cramér–Rao lower bound** on the variance of any unbiased estimator of $\theta$, $\hat{\theta}$ is
 
   $$Var(\hat{\theta}) \ge (\mathcal{I}_n)^{-1}$$
-  
-  
+ 
+:::
+
 # Cramér–Rao lower bound (CRLB)
+
+::: {.incremental}
 
 - Consider what **unbiasedness** gets us:
 
   $$\mathbb{E}[\hat{\theta} - \theta] = \int(\hat{\theta} - \theta) f(\mathbf{y}| \theta)d\mathbf{y} = 0$$
   
-- Since unbiasedness is true for every value of $\theta$, differentiating with respect to $\theta$ should also give us 0
+- Since unbiasedness is true for every value of $\theta$, differentiating with respect to $\theta$ should also give us zero
 
   $$\frac{\partial}{\partial\theta} \int(\hat{\theta} - \theta) f(\mathbf{y} |\theta)d\mathbf{y} = 0$$
   
 - Under the conditions that let us exchange differentiation and integration
   
-  $$ \int \frac{\partial}{\partial\theta} \bigg((\hat{\theta} - \theta) f(\mathbf{y}| \theta)\bigg)d\mathbf{y} = 0$$
+  $$\int \frac{\partial}{\partial\theta} \bigg((\hat{\theta} - \theta) f(\mathbf{y}| \theta)\bigg)d\mathbf{y} = 0$$
+
+:::
   
 # Cramér–Rao lower bound (CRLB)
+
+::: {.incremental}
 
 - Product Rule
   
@@ -550,8 +640,12 @@ $$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})
 - We can write $\frac{\partial}{\partial \theta} f(\mathbf{y}| \theta)$ in terms of the **log** density (via chain rule)
 
   $$\frac{\partial}{\partial \theta} f(\mathbf{y}; \theta) = f(\mathbf{y}| \theta) \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)$$
+
+:::
   
 # Cramér–Rao lower bound (CRLB)
+
+::: {.incremental}
 
 - Plugging back in!
 
@@ -559,16 +653,19 @@ $$\sqrt{n}(\hat{\theta} - \theta_0) = [-\ell^{\prime\prime}(\theta_0|\mathbf{y})
 
 - "Law of the unconscious statistician" (definition of expectations of functions)
 
-$$\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg] = 1$$
+  $$\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg] = 1$$
 
 - Square both sides
 
-$$\bigg|\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg]\bigg|^2 = 1$$
+  $$\bigg|\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial \theta} \log  f(\mathbf{y}|\theta)\bigg]\bigg|^2 = 1$$
 
+:::
 
 # Cramér–Rao lower bound (CRLB)
 
-- (One formulation of) the **Cauchy-Schwarz Inequality** for expectations states that for two random variables $X$ and $Y$
+::: {.incremental}
+
+- The **Cauchy-Schwarz Inequality** for expectations states that for two random variables $X$ and $Y$
 
   $$|\mathbb{E}[XY]|^2 \le \mathbb{E}(X^2)\mathbb{E}(Y^2)$$
   
@@ -580,24 +677,81 @@ $$\bigg|\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial
 
   $$Var(\hat{\theta}) \ge \frac{1}{\mathcal{I}_n}$$
 
-# Asymptotic normality
+:::
 
-- Under our i.i.d. assumption (+ regularity conditions), the Central Limit Theorem lets us show that the MLE is asymptotically normal
+# Illustration: Normal Model
 
-  $$\sqrt{n}(\hat{\theta} - \theta) \overset{d}{\rightarrow} \text{Normal}(0, \mathcal{I}^{-1})$$
+- How do we estimate the sampling variance?
+  - Plug in the **sample** inverse negative hessian evaluated at the MLE - again, Law of Large Numbers means its consistent for the population expectation
+  - Requires us to take second-order partial derivatives; `maxLik` does it numerically - beware of instability here!
+
+```{r, echo=T}
+vcov_normal <- solve(-hessian(estimates))
+```
+
+```{r, echo=T}
+se_est <- sqrt(diag(vcov_normal))
+print(beta_MLE)
+print(se_est)
+```
+
+```{r, echo=T}
+tidy(ols_est)
+```
+
+# "Robust" Standard Errors
+
+::: {.incremental}
+
+- Let's return to our result on the asymptotic variance of $\hat{\theta}$. Denote the **score** for each observation at the true parameter value
+
+  $$g_i(y_i | \theta_0) \equiv \frac{\partial}{\partial\theta} \log f(y_i | \theta_0)$$
   
-- The key intuition is again from the fact that we can write the 
+- And the **hessian**
+  
+  $$h_i(y_i | \theta_0) \equiv \frac{\partial^2}{\partial\theta^2} \log f(y_i | \theta_0)$$
+  
+- Our asymptotic variance is
+
+  $$Var(\hat{\theta}) = \bigg[\mathbf{E}[-\ell^{\prime\prime}(\theta_0|\mathbf{y})]\bigg]^{-1}\bigg[Var(g_i(Y_i|\theta_0))\bigg]\bigg[\mathbf{E}[-\ell^{\prime\prime}(\theta_0|\mathbf{y})]\bigg]^{-1}$$
+
+:::
+
+# "Robust" standard errors
+
+::: {.incremental}
+
+- Previously, we used the fact that the variance of the score was equivalent to the information to simplify further.
+
+- But we can instead just estimate each component directly using both the observed hessian **and** the outer product of the observed gradient at each observation
+  
+  $$\widehat{Var(\hat{\theta})} = \bigg[-\sum_{i=1}^n h_i(y_i|\hat{\theta})\bigg]^{-1}\bigg[\sum_{i=1}^n g_i(y_i|\hat{\theta})  g_i(y_i|\hat{\theta}) ^{\prime}\bigg]\bigg[-\sum_{i=1}^n h_i(y_i|\hat{\theta})\bigg]^{-1}$$
+
+- These estimators are **consistent** for the asymptotic variance under mis-specification of the outcome distribution
+  - But finite-sample properties can be not great - usually *undercoverage* in small samples.
+  - Typically add a finite-sample correction (e.g. $\frac{N}{N-K}$) 
+
+:::
+
+# Illustration: Normal Model
 
 
-- So in large samples, a good approximation of the variance of $\hat{\theta}$ is $\mathcal{I}_n^{-1}$
-  - An additional result: The inverse of the information is the lowest possible variance of any unbiased estimator (**Cramér-Rao lower bound**) 
-  - MLE achieves this bound asymptotically
+- `estfun` in the `sandwich` library gives us the gradient at each observation of the MLE if we've written the likelihood function to return an $N$-length vector with the likelihood at each observation.
 
+```{r, echo = T}
+grad <- sandwich::estfun(estimates)
+head(grad)
+colMeans(grad)
+```
 
-- How do we do inference then? Same way as before -- plug in a consistent estimator of $\mathcal{I}_n^{-1}$.
-  - Calculate the hessian of the log-likelihood at the MLE and take the inverse of its negative.
+- Implementing the sandwich
 
-# Illustration: The Normal Model
+```{r, echo=T}
+robust_vcov <- solve(-hessian(estimates))%*%(t(grad)%*%(grad))%*%solve(-hessian(estimates))
+sqrt(diag(robust_vcov))
+sqrt(diag(vcov_normal))
+```
+
 
 # Conclusion
 
@@ -614,5 +768,5 @@ $$\bigg|\mathbb{E}\bigg[(\hat{\theta} - \theta)  \times \frac{\partial}{\partial
   - A *technique* to come up with a **good** estimator in any case where we can write down a (well-behaved) likelihood function for a DGP
   - Still a "function" of the data, but that function has useful properties:
     - Consistency, Asymptotic Normality, Asymptotic Efficiency
-    
----
+
+
