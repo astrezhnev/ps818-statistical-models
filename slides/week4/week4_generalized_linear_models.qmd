@@ -5,7 +5,7 @@ author:
   - name: "Anton Strezhnev"
     affiliation: "University of Wisconsin-Madison"
     email: strezhnev@wisc.edu
-date: "September 8, 2025"
+date: "September 22, 2025"
 date-format: "MMMM D, YYYY"
 editor: 
   render-on-save: true
@@ -286,6 +286,8 @@ normal_logit
 
 - Contrast with Newton-Raphson where "how much to move" is based on calculating and invert the Hessian (computationally expensive!)
 
+
+
 # Deriving a logit likelihood
 
 - From our logit link function, we have
@@ -303,6 +305,60 @@ and
   
   $$\ell(\beta | \mathbf{y}, \mathbf{X}) = \sum_{i=1}^Ny_i X_i^{\prime}\beta - \log\bigg(1 + \exp(X_i^{\prime}\beta)\bigg)$$
 
+
+# Iteratively reweighted least squares
+
+- For GLMs with the canonical link, the Newton-Raphson updates can also be written as a series of solutions to a *weighted least squares* problem.
+- Take our Bernoulli likelihood:
+
+$$\ell(\mathbf{Y} | \mathbf{X}, \beta) = \sum_{i=1}^n y_iX_i^\prime\beta - \log\bigg(1 + \exp(X_i^\prime\beta)\bigg)$$
+
+- Take the first order derivative w.r.t $\beta$ to get the score (remember, we typically let $X_{i0} = 1$ be the intercept)
+
+  $$S(\beta) =  \begin{bmatrix}  \sum_{i=1}^n y_i - \frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)} \\
+ \sum_{i=1}^n y_iX_{i1} -  X_{i1}\frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)} \\
+\vdots \\
+\sum_{i=1}^n y_iX_{ik} - X_{ik}\frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)} \end{bmatrix}$$
+
+
+# Iteratively reweighted least squares
+
+- Writing this in matrix form and substituting our definition of $\pi_i = \frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)}$
+
+$$S(\beta) = \sum_{i=1}^n X_i(y_i - \pi_i) = \mathbf{X}^\prime (y - \pi)$$
+
+
+# Iteratively reweighted least squares
+
+- Differentiating the score again to get the Hessian
+  - First, the diagonal terms:
+
+$$\frac{\partial^2}{\partial \beta_k^2}\ell(\mathbf{Y} | \mathbf{X}, \beta) = - \sum_{i=1}^n X_{ik} \bigg(X_{ik} \frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime\beta)} - X_{ik} \frac{\exp(X_i^\prime \beta)^2}{(1 + \exp(X_i^\prime\beta))^2 }\bigg)$$
+
+- Factoring and substituting in $\pi$ again
+
+$$\frac{\partial^2}{\partial \beta_k^2}\ell(\mathbf{Y} | \mathbf{X}, \beta) = -\sum_{i=1}^n X_{ik}^2(\pi_i - \pi_i^2) = -\sum_{i=1}^n X_{ik}^2\bigg[\pi_i(1 - \pi_i)\bigg]$$
+
+- The off-diagonal terms also have this $\pi(1-\pi)$ component:
+
+$$\frac{\partial^2}{\partial \beta_k \partial \beta_j}\ell(\mathbf{Y} | \mathbf{X}, \beta) =  -\sum_{i=1}^n X_{ik}X_{ij}\bigg[\pi_i(1 - \pi_i)\bigg]$$
+
+# Iteratively reweighted least squares
+
+- In matrix form, our Hessian is 
+
+$$\mathbf{H}(\beta) = -\mathbf{X}^\prime\mathbf{W}\mathbf{X}$$
+where $\mathbf{W}$ is an $n \times n$ diagonal matrix with elements $\pi_i(1-\pi_i)$
+
+- Plugging these two components into our Newton-Raphson update formula
+
+$$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)} - \mathbf{H}^{-1}(\hat{\beta}^{(t)}) S(\hat{\beta}^{(t)})$$
+$$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)}  + (\mathbf{X}^\prime\mathbf{W}\mathbf{X})^{-1}\mathbf{X}^\prime (y - \pi^{(t)})$$
+where the elements of $\mathbf{W}$ are evaluated at $\pi^{(t)}$ (the "predicted probabilities" at step $t$).
+
+- Re-arranging yields an update step that has the form of a weighted least squares regression with an augmented outcome based on the "current" parameters $\hat{\beta}^{(t)}$ and $\pi^{(t)}$
+
+$$\hat{\beta}^{(t+1)} =  (\mathbf{X}^\prime\mathbf{W}\mathbf{X})^{-1}\mathbf{X}^\prime \mathbf{W}\bigg(\mathbf{X}\hat{\beta}^{(t)} + \mathbf{W}^{-1}(y - \pi^{(t)})\bigg)$$
 
 # Example: Propensity Scores
 
@@ -550,9 +606,11 @@ c(pred_median - abs(qnorm(.025))*sqrt(pred_prob_var),
   - e.g. the marginal change in the **probability of** $Y=1$ for a one-unit change in $X$
   
 - `avg_predictions()` will calculate point estimates + CIs for the expected outcome just like we did above!
+- `avg_comparisons()` will do the implied "marginal effects" for a unit change in $X$ given a set baseline.
 
 ```{r, echo=T}
 marginaleffects::avg_predictions(logit_Rglm, newdata = "median")
+marginaleffects::avg_comparisons(logit_Rglm, newdata ="median")
 ```
 
 # "Monte Carlo" Delta Method
@@ -586,59 +644,519 @@ c(pred_median - abs(qnorm(.025))*sd(sim_pi),
   pred_median + abs(qnorm(.025))*sd(sim_pi))
 ```
 
+# "Latent variables" and logit
 
-# Iteratively reweighted least squares
+# Latent variables
 
-- For GLMs with the canonical link, the Newton-Raphson updates can be written as a series of solutions to a *weighted least squares* problem.
-- Take our likelihood:
+- Another common way of formulating discrete outcome regressions is in terms of an unobserved continuous "latent" variable and an observation mechanism.
+  - Instead of putting a distribution on $Y_i$, we put one on an unobserved $Y_i^*$
+  - $Y_i$ is some function of $Y_i^*$ (usually an indicator function of some sort)
 
-$$\ell(\mathbf{Y} | \mathbf{X}, \beta) = \sum_{i=1}^n y_iX_i^\prime\beta - \log\bigg(1 + \exp(X_i^\prime\beta)\bigg)$$
+- For the logistic regression
 
-- Take the first order derivative w.r.t $\beta$ to get the score (remember, we typically let $X_{i0} = 1$ be the intercept)
+$$Y_i = \mathbb{1}(Y_i^* \ge 0)$$
+$$Y_i^* = X_i^{\prime}\beta + \epsilon_i$$
+$$\epsilon_i \sim \text{Logistic}(0, 1)$$
 
-  $$S(\beta) =  \begin{bmatrix}  \sum_{i=1}^n y_i - \frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)} \\
- \sum_{i=1}^n y_iX_{i1} -  X_{i1}\frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)} \\
-\vdots \\
-\sum_{i=1}^n y_iX_{ik} - X_{ik}\frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)} \end{bmatrix}$$
+- The Logistic distribution is parameterized in terms of a "location" (mean) $\mu$ and a "scale" parameter $s>0$. 
+  - For $\mu = 0$, $s= 1$ we have the "standard" logistic
+
+$$P(\epsilon_i < x) = \frac{1}{1 + \exp(-x)}$$
+
+# Latent variables
+
+- So what's $E[Y_i|X_i] = Pr(Y_i = 1|X_i)$?
+
+$$Pr(Y_i = 1|X_i) = Pr(Y_i^* \ge 0) = Pr(\epsilon_i < X_i^{\prime}\beta) = \frac{1}{1 + \exp(-X_i^{\prime}\beta)}$$
+
+- We can write the **probit** similarly, defining the error distribution as
+
+$$\epsilon_i \sim \text{Normal}(0, 1)$$
+
+- And by extension, the probability $Pr(Y_i|X_i)$
+
+$$Pr(Y_i = 1|X_i) = Pr(Y_i^* \ge 0) = Pr(\epsilon_i < X_i^{\prime}\beta) = \Phi(X_i^{\prime}\beta)$$
+
+# Latent variables
+
+- We can visualize this as an integral over the density of the random "error" $\epsilon_i$
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+logistic_dens <- ggplot() + xlim(-5, 5) + geom_function(fun=dlogis) + theme_bw() + ylab("Density") + geom_area(aes(x=c(-5,2)),stat = "function", fun = dlogis, fill = "dodgerblue", xlim = c(-5, 2)) + 
+  xlab(expression(epsilon)) + geom_vline(xintercept=0, lty=2) + geom_vline(xintercept=2, lty=3, col="indianred", lwd=1) 
+
+logistic_dens
+```
+
+# Latent variables
+
+- Same thing for a probit
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+probit_dens <- ggplot() + xlim(-5, 5) + geom_function(fun=dnorm) + theme_bw() + ylab("Density") + geom_area(aes(x=c(-5,2)),stat = "function", fun = dnorm, fill = "dodgerblue", xlim = c(-5, 2)) + 
+  xlab(expression(epsilon)) + geom_vline(xintercept=0, lty=2) + geom_vline(xintercept=2, lty=3, col="indianred", lwd=1) 
+
+probit_dens
+```
+
+# Ordinal logit
+
+- Using the latent variable formulation lets us extend the binary outcomes to logit to outcomes with multiple discrete levels.
+- For example, consider an "ordinal" response variable
+  - (e.g.) a likert scale (1 = "strongly disagree", 3 = "neutral", 5 = "strongly agree")
+
+- The responses are *ordered* but the intervals between them do not have any meaning.
+  - A popular modeling technique with an ordinal $Y$ is to treat it as an expression of a latent variable
+
+# Ordinal logit
+
+- In an *ordered logit* model, an ordinal outcome $Y$ with $L$ unique, ordered values $Y \in \{1, 2, 3, \dotsc L\}$ is a function of a latent variable and a set of $L-1$ cutpoints $\kappa$
+
+$$Y_i = \begin{cases}1 &\text{if } Y_i^* \le \kappa_1 \\
+                      2 &\text{if } \kappa_1 < Y_i^* \le \kappa_2\\
+                      3 &\text{if } \kappa_2 < Y_i^* \le \kappa_3\\
+                      \vdots &\\
+                      L &\text{if } Y_i^* > \kappa_{L-1}\end{cases}$$
+
+- We still assume $Y_i^*$ has a logistic distribution
+
+$$Y_i^* = X_i^{\prime}\beta + \epsilon_i$$
+
+$$\epsilon_i \sim \text{Logistic}(0, 1)$$
+
+# Ordinal logit
+
+- To estimate the model, we now have to estimate both the $\beta$ parameters and the $\kappa$ parameters
+  - Note we omit the intercept from our $X_i$ - the $\kappa$ parameters are essentially the "intercepts" for each boundary between the choices
+
+- How does the model map changes in the latent variable to changes in probability?
+
+$$Pr(Y_i = 1) = Pr(Y_i^* \le \kappa_1) = Pr(\epsilon_i \le \kappa_1 - X_i^{\prime}\beta)$$
+$$Pr(Y_i = 2) = Pr(Y_i = 2 \cup Y_i = 1) - Pr(Y_i = 1) = Pr(Y_i^* \le \kappa_2) - Pr(Y_i^* \le \kappa_1)$$
+$$Pr(Y_i = 3) = Pr(Y_i = 3 \cup Y_i = 2 \cup Y_i = 1) -  Pr(Y_i = 2 \cup Y_i = 1)  = Pr(Y_i^* \le \kappa_3) - Pr(Y_i^* \le \kappa_2)$$
 
 
-# Iteratively reweighted least squares
+# Ordinal logit
 
-- Writing this in matrix form and substituting our definition of $\pi_i = \frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime \beta)}$
+- Let's think in terms of the distribution of $Y_i^*$ and the cut-points for a case with $L=3$. For $X_i^{\prime}\beta = 0$:
 
-$$S(\beta) = \sum_{i=1}^n X_i(y_i - \pi_i) = \mathbf{X}^\prime (y - \pi)$$
+```{r, echo=F, fig.width=7, fig.height = 3, fig.align="center"}
+logistic_dens <- ggplot() + xlim(-8, 8) + geom_function(fun=dlogis) + theme_bw() + ylab("Density") + geom_area(aes(x=c(-8,-1)),stat = "function", fun = dlogis, fill = "dodgerblue", xlim = c(-8, -1)) +  geom_area(aes(x=c(-1,2)),stat = "function", fun = dlogis, fill = "darkorange", xlim = c(-1, 2)) + geom_area(aes(x=c(2,8)),stat = "function", fun = dlogis, fill = "yellow", xlim = c(2, 8)) + 
+  xlab("Y*") + geom_vline(xintercept=0, lty=2) + geom_vline(xintercept=-1, lty=3, col="darkgreen", lwd=1) + geom_vline(xintercept=2, lty=3, col="darkgreen", lwd=1) 
+
+logistic_dens
+```
+
+# Ordinal logit
+
+- Shifting the mean of $Y^*$ up by 3:
+
+```{r, echo=F, fig.width=7, fig.height = 3, fig.align="center"}
+logistic_dens <- ggplot() + xlim(-8, 8) + geom_function(fun=dlogis, args=list(location=3)) + theme_bw() + ylab("Density") + geom_area(aes(x=c(-8,-1)),stat = "function", fun = dlogis, fill = "dodgerblue", xlim = c(-8, -1),  args=list(location=3)) +  geom_area(aes(x=c(-1,2)),stat = "function", fun = dlogis, fill = "darkorange", xlim = c(-1, 2),  args=list(location=3)) + geom_area(aes(x=c(2,8)),stat = "function", fun = dlogis, fill = "yellow", xlim = c(2, 8),  args=list(location=3)) + 
+  xlab("Y*") + geom_vline(xintercept=3, lty=2) + geom_vline(xintercept=-1, lty=3, col="darkgreen", lwd=1) + geom_vline(xintercept=2, lty=3, col="darkgreen", lwd=1) 
+
+logistic_dens
+```
+
+# Ordinal logit
+
+- This structural mapping from $Y^*$ to $P(Y_i = l)$ is not trivial - it encodes a particular assumption about how these probabilities relate to one another.
+- Referred to as the **proportional odds** assumption
+
+$$\log\left(\frac{Pr(Y_i \le l)}{1 - Pr(Y_i \le l)}\right) = \kappa_l - X_i^{\prime}\beta$$
+
+- **Intuitively** -- The $\beta$ parameters are shared across all the possible outcome levels. Information about whether someone responds "strongly agree" *also* tells us something about how likely they would be to respond specifically to "agree", "neutral", "disagree", and "strongly disagree"
+  - Not trivial if there's non-monotonicity or heterogeneous effects. 
+  - Be careful with these models!
+  
+# Multinomial logit
+
+- In a setting with multiple **unordered** outcomes, the natural extension of the logit regression is the **multinomial** logit
+  - Here, the latent-variable formulation is particularly helpful.
+
+- Suppose we have an outcome with $K$ unordered levels (e.g. "choices"). Define latent variables $Y_{ik}^*$ for the $K-1$ categories $k = 2, 3, \dotsc K$
+  - For identification, we set one category to be the "baseline" by anchoring the coefficients to zero $\beta_1 = 0$
+  
+  $$\begin{align*}Y_{i2}^* &= X_i^{\prime}\beta_2 + \epsilon_{i2}\\
+  Y_{i3}^* &= X_i^{\prime}\beta_3 + \epsilon_{i3}\\
+  &\vdots \\
+  Y_{iK}^* &= X_i^{\prime}\beta_K + \epsilon_{iK}\end{align*}$$
+  
+- The probability of observing the choice $Y_{i} = k^*$ is the probability that the $k^*$th "latent variable" is greater than all of the others.
+
+  $$Pr(Y_i = k^*) = Pr(\text{max}\{Y^*_{i1}, Y^*_{i2}, \dotsc Y^*_{iK}\} = Y^*_{ik^*})$$
+  
+# Multinomial logit
+
+- It turns out that if the error terms $\epsilon_{ik}$ have i.i.d. "Type I extreme value" distributions, we can write the choice probabilities in closed form.
+
+  $$Pr(Y_i = k^*) = \frac{\exp(X_i^{\prime}\beta_{k^*})}{\sum_{k=1}^K \exp(X_i^{\prime}\beta_{k})}$$
+  
+- This is sometimes refered to as the "softmax" function in machine learning
+- **Note**: With a normalized "baseline" category 1, we can write this equivalently as:
+
+  $$Pr(Y_i = k^*) = \frac{\exp(X_i^{\prime}\beta_{k^*})}{1 + \sum_{k=2}^K \exp(X_i^{\prime}\beta_{k})}$$
+
+# Example: Appointer Affiliation Bias
+
+- **Puig and Strezhnev (2017)** ran a survey experiment on a group of international arbitration experts to see how manipulating the appointing party affected their decisionmaking in a hypothetical vignette
+  - Respondents were given a hypothetical dispute and asked to determine who should pay the legal costs
+  - Three options: **Loser pays all**, **Loser pays some**, **Both sides split** 
+
+```{r, echo=F, message = F}
+study1 <- read_csv("data/experiment1_cleaned.csv", na= c("", "NA", "-99"))
+```
+
+```{r, include=F, echo=F}
+study1 <- study1 %>% mutate(isReimbursement_Factor = case_when(isReimbursement == 1 ~ "Claimant pays all",
+                                                     isReimbursement == 2 ~ "Claimant pays some",
+                                                     isReimbursement == 3 ~ "Split costs",
+                                                     isReimbursement == 4 ~ "Respondent pays some",
+                                                     isReimbursement == 5 ~ "Respondent pays all"),
+                  isReimbursementFolded_Factor = case_when(isReimbursementFolded == 1 ~ "Winner pays all",
+                                                           isReimbursementFolded == 2 ~ "Winner pays some",
+                                                           isReimbursementFolded == 3 ~ "Split costs",
+                                                           isReimbursementFolded == 4 ~ "Loser pays some",
+                                                           isReimbursementFolded == 5 ~ "Loser pays all"))
+
+study1$isReimbursementFolded_Factor <- factor(study1$isReimbursementFolded_Factor, levels = c("Winner pays all", "Winner pays some", "Split costs", "Loser pays some", "Loser pays all"), ordered =T)
+study1_complete <- study1 %>% filter(!is.na(isReimbursementFolded)&Finished == 1) %>% filter(isReimbursementFolded_Factor != "Winner pays some"&isReimbursementFolded_Factor != "Winner pays all")
+
+```
+
+  
+```{r, echo=F, fig.align="center"}
+study1_complete %>% ggplot(aes(x=isReimbursementFolded_Factor)) + geom_bar() + xlab("Selected outcome") + ylab("Count") + ggtitle("Distribution of outcome in Puig and Strezhnev (2017)") + theme_minimal()
+```
+  
+# Example: Appointer Affiliation Bias
+
+- It would seem like an ordinal logit regression would be appropriate here - three category discrete outcome with a clear ordering
+  - Implemented in the `ordinal` package
+
+```{r, echo=T}
+ordered_logit <- ordinal::clm(isReimbursementFolded_Factor ~ isAppointerSide, data=study1_complete %>% 
+                       filter(isAppointerSide == "Appointed by Winner"|isAppointerSide == "Appointed by Loser"))
+```
+
+```{r, echo=T}
+summary(ordered_logit)
+```
+
+# Example: Appointer Affiliation Bias
+
+- The model implies that arbitrators appointed by the winning party shift mostly from **splitting the costs** to making the loser pay for **everything**
+  - But is this real or an artifact of the proportional odds assumption? Is there a "constant effect" on the latent variable scale?
+
+```{r}
+marginaleffects::avg_comparisons(ordered_logit)
+```
+
+# Example: Appointer Affiliation Bias
+
+- Compare with **multinomial logit** (which in this case is equivalent to OLS for each category since we're using a fully-saturated regression)
+
+```{r, echo = T, warning = F}
+multinom_logit <- nnet::multinom(isReimbursementFolded_Factor ~ isAppointerSide, data=study1_complete %>% 
+                       filter(isAppointerSide == "Appointed by Winner"|isAppointerSide == "Appointed by Loser"))
+```
+
+```{r, echo=T}
+marginaleffects::avg_comparisons(multinom_logit)
+```
+
+# Survival models
+
+# Survival models
 
 
-# Iteratively reweighted least squares
+::: {.incremental}
 
-- Differentiating the score again to get the Hessian
-  - First, the diagonal terms:
+- Often we have outcome data that is measured as the "time-to-event"
+  - From the medical literature, this is often the number of days before a patient suffers some adverse event (e.g. death).
+  - But lots of other applications (e.g. time to treaty ratification)
 
-$$\frac{\partial^2}{\partial \beta_k^2}\ell(\mathbf{Y} | \mathbf{X}, \beta) = - \sum_{i=1}^n X_{ik} \bigg(X_{ik} \frac{\exp(X_i^\prime \beta)}{1 + \exp(X_i^\prime\beta)} - X_{ik} \frac{\exp(X_i^\prime \beta)^2}{(1 + \exp(X_i^\prime\beta))^2 }\bigg)$$
+- Assume we observe N i.i.d. event times $T_1, T_2, \dotsc, T_n$
 
-- Factoring and substituting in $\pi$ again
+- Define the "survival function"
 
-$$\frac{\partial^2}{\partial \beta_k^2}\ell(\mathbf{Y} | \mathbf{X}, \beta) = -\sum_{i=1}^n X_{ik}^2(\pi_i - \pi_i^2) = -\sum_{i=1}^n X_{ik}^2\bigg[\pi_i(1 - \pi_i)\bigg]$$
+  $$S(t) = Pr(T > t) = 1 - F(t)$$
 
-- The off-diagonal terms also have this $\pi(1-\pi)$ component:
+- We'll also often work with the "hazard" or the "instantaneous" probability of an event happening *given* that it has not yet occurred
 
-$$\frac{\partial^2}{\partial \beta_k \partial \beta_j}\ell(\mathbf{Y} | \mathbf{X}, \beta) =  -\sum_{i=1}^n X_{ik}X_{ij}\bigg[\pi_i(1 - \pi_i)\bigg]$$
+  $$h(t) = \underset{\Delta t \to 0}{\lim} \frac{P(t < T_i \le t + \Delta t | T_i > t)}{\Delta t} = \frac{f(t)}{S(t)} = \frac{f(t)}{1-F(t)}$$
 
-# Iteratively reweighted least squares
+- **Intuitively**: Given that I know that an event has not occurred until $t$, what is the probability that it will immediately occur next!
 
-- In matrix form, our Hessian is 
+:::
 
-$$\mathbf{H}(\beta) = -\mathbf{X}^\prime\mathbf{W}\mathbf{X}$$
-where $\mathbf{W}$ is an $n \times n$ diagonal matrix with elements $\pi_i(1-\pi_i)$
+# Survival models
 
-- Plugging these two components into our Newton-Raphson update formula
+- We'll also define the cumulative hazard
 
-$$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)} - \mathbf{H}^{-1}(\hat{\beta}^{(t)}) S(\hat{\beta}^{(t)})$$
-$$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)}  + (\mathbf{X}^\prime\mathbf{W}\mathbf{X})^{-1}\mathbf{X}^\prime (y - \pi^{(t)})$$
-where the elements of $\mathbf{W}$ are evaluated at $\pi^{(t)}$ (the "predicted probabilities" at step $t$).
+  $$H(t) = \int_{0}^{t} h(u)du = \int_0^{t} \frac{f(u)}{S(u)} du =  -\log(S(t))$$
 
-- Re-arranging yields an update step that has the form of a weighted least squares regression with an augmented outcome based on the "current" parameters $\hat{\beta}^{(t)}$ and $\pi^{(t)}$
+# Non-parametric approach
 
-$$\hat{\beta}^{(t+1)} =  (\mathbf{X}^\prime\mathbf{W}\mathbf{X})^{-1}\mathbf{X}^\prime \mathbf{W}\bigg(\mathbf{X}\hat{\beta}^{(t)} + \mathbf{W}^{-1}(y - \pi^{(t)})\bigg)$$
+::: {.incremental}
+
+- The easiest way to estimate $S(t) = 1 - F(t)$ is to just plug in $\hat{F(t)}$ - our empirical CDF in the sample
+  - At any given value $t$, how many events occur *after* $t$
+
+- **Problem**: This doesn't address *censoring* of observations -- sometimes we stop observing a unit at time $t^*$ rather than observing an actual event.
+  - We know that $T_i > t^*$ but not what $T_i$ actually equals
+  
+- Let $C = \{C_1, C_2, \dotsc, C_n\}$ denote the **censoring indicator**
+  - If $C_i = 1$, then the observation is *censored*, the observed value $t$ only gives us information on $T_i > t$ as opposed to $T_i = t$.
+  - Crucially, we assume that censoring is "uninformative"
+
+- One approach to constructing a non-parametric estimator of the survival function *under censoring* is the **Kaplan-Meier** estimator.
+
+:::
+
+# Kaplan-Meier Estimator
+
+::: {.incremental}
+
+- Start by arranging the possible event times from $0 < t_{(1)} < t_{(2)} < t_{(3)} < t_{(4)}, \dotsc, < t_{(n)}$
+  - Suppose $t$ is after $t_{(j)}$ and before $t_{(j+1)}$. We can write the survival function in terms of conditional probabilities:
+  
+  $$S(t) = Pr(T_i > t | T_i > t_{(j)}) \times Pr(T_i > t_{(j)} | T_i > t_{(j-1)}) \times \dotsc \times Pr(T_i > t_{(2)} | T_i  > t_{(1)}) \times Pr(T_i > t_{(1)})$$
+
+- The **Kaplan-Meier** estimator $\hat{S(t)}$ can be understood as a "plug-in" estimator for each of these probabilities.
+
+  $$\hat{S}(t) = \prod_{j: t_{(j)} \le t} \bigg(1 - \frac{d_j}{r_j} \bigg)$$
+
+- $d_j$ denotes the number of units that experience an event at time $t_{(j)}$ 
+- $r_j$ is the number of units that are still in the risk set up to time $j$
+  - Units drop out of the risk set $r$ over time by either experiencing an event or being censored
+
+:::
+
+# Kaplan-Meier Estimator
+
+::: {.incremental}
+
+- **Intuition**: Consider one of the terms in the product. Using the definition of conditional probability:
+
+  $$Pr(T_i > t_{(j)} | T_i > t_{(j-1)}) = 1 - Pr(T_i < t_{(j)}|T_i > t_{j-1}) = 1 - \frac{Pr(T_i \le t_{(j)}, T_i > t_{(j-1)})}{Pr(T_i > t_{(j-1)})}$$
+
+- In the numerator, our "plug-in" estimator is just the share of units that have events occurring at $t_{(j)}$.
+- In the denominator we have the share of units that we know for sure are still "active" in the interval after $t_{(j-1)}$
+
+- Hence our plug-in estimator:
+
+  $$\widehat{Pr(T_i > t_{(j)} | T_i > t_{(j-1)})} = 1 - \frac{d_j}{r_j}$$
+
+- Taking the product across all of the $j$ where $t_{(j)} < t$ yields the Kaplan-Meier estimator.
+
+:::
+
+# Illustration: Lung Cancer
+
+- Let's look at a sample dataset from the `survival` R package on survival times for patients with advanced lung cancer.
+
+```{r}
+library(survival)
+data(cancer, package="survival")
+as_tibble(lung)
+```
+
+- We want to estimate $S(t | \text{Sex} = \text{Male})$ and $S(t | \text{Sex} = \text{Female})$
+
+
+# Illustration: Lung Cancer
+
+- In the `survival` package, we need to define a "survival" outcome in terms of the event time and the censoring indicator
+
+```{r}
+surv_model <- survfit(Surv(time, status) ~ 1, data=lung)
+```
+
+
+
+# Illustration: Lung Cancer
+
+- Plot the curve for the sample as a whole
+
+```{r, fig.width=8, fig.height=6, fig.align='center'}
+plot(surv_model, xlab="Survival Time", conf.int=T, ylab="Survival Rate", mark.time=TRUE)
+```
+
+
+
+# Illustration: Lung Cancer
+
+- Now let's do this for gender
+
+```{r}
+surv_model_sex <- survfit(Surv(time, status) ~ I(sex==2), data=lung)
+```
+
+
+
+# Illustration: Lung Cancer
+
+- Plot separate curves for men and women
+
+```{r, fig.width=8, fig.height=6, fig.align='center'}
+plot(surv_model_sex, col=c("indianred", "dodgerblue"), xlab="Survival Time", conf.int=T, ylab="Survival Rate", mark.time=T)
+legend(750, .9, c("Male", "Female"), col=c("indianred", "dodgerblue"), lwd=2, bty='n')
+```
+
+
+
+# Parametric inference
+
+::: {.incremental}
+
+- When we want to model the survival function using covariates, we run into a clear constraint using purely non-parametric methods -- with continuous covariates, we may only have one observation that has a unique covariate value
+  - Splitting the sample and constructing separate K-M curves quickly becomes infeasible.
+
+- We may want to assume a **model** for the event time. We can write that density in terms of the *hazard* and the *survival* function
+
+  $$f(t) = h(t)S(t)$$
+
+- Note that by the definition of the cumulative hazard $H(t) = - \log(S(t))$ and $S(t) = \exp(-H(t))$, so 
+
+  $$f(t) = h(t)\exp(-H(t))$$
+
+:::
+
+# Parametric inference
+
+- Depending on the assumptions we make about the nature of the hazard, we can obtain different distributions for $f(t)$.
+  - In the simplest case, lets assume that the hazard does not vary over time: $h(t) = \lambda$. $\lambda > 0$
+  - And the cumulative hazard is $H(t) = \int_{0}^{t} \lambda du = \lambda t$
+
+
+- This yields the **exponential distribution**
+
+  $$f(t) = \lambda \exp(-\lambda t)$$
+
+
+# Exponential Model
+
+- The mean of $T_i \sim \text{Exponential}(\lambda)$ is $E[T_i] = \frac{1}{\lambda}$. We'll often reparameterize the mean as $\theta$, yielding a density of 
+
+  $$f(t) = \frac{1}{\theta} \exp\bigg(-\frac{1}{\theta} t\bigg)$$
+
+- $\theta$ is strictly greater than $0$, so we'll use a log-link to incorporate the covariates:
+
+  $$\log(E[Y_i | X_i] = \log(\theta_i) = X_i^{\prime}\beta$$
+
+- Alternatively, we can write 
+
+  $$E[Y_i | X_i] = \exp(X_i^{\prime}\beta)$$
+
+- Note that the constant hazard assumption is a strong one -- the exponential distribution is "memoryless" in that knowing that a unit has survived up until time $t$ tells you nothing about its instantenous probability of failure.
+  - More flexible distributions like the Weibull allow for a time-varying hazard.
+
+# Exponential Model
+
+ - We can interpret changes in the linear predictor in terms of changes in the hazard since 
+ 
+ $$h(t) = \frac{1}{\theta_i} = \frac{1}{\exp(X_i^{\prime}\beta)}$$
+ 
+ - Increases in the linear predictor reduce the hazard.
+ 
+ - This also lets us write down the survival function
+ 
+ $$S(t) = \exp\bigg(- \frac{1}{\exp(X_i^{\prime}\beta)}t \bigg)$$
+
+# Application
+
+- Let's compare our parametric fit to the non-parametric Kaplan-Meier estimates
+ 
+```{r}
+exp_model_sex <- survreg(Surv(time, status) ~ I(sex==2), dist="exponential", data=lung) # sex = 2 is a dummy variable for female
+```
+
+- Get the survival curves for men and women
+
+```{r}
+exp_surv_men <- function(x) pexp(x, rate = 1/exp(coef(exp_model_sex)%*%c(1,0)), lower.tail = F)
+exp_surv_women <- function(x) pexp(x, rate = 1/exp(coef(exp_model_sex)%*%c(1,1)), lower.tail=F)
+```
+
+
+# Application
+
+- Overlay the exponential survival curves on the Kaplan-Meier estimates
+
+```{r, fig.width=8, fig.height=6, fig.align='center', warning=F}
+plot(surv_model_sex, col=c("indianred", "dodgerblue"), xlab="Survival Time", conf.int=T, ylab="Survival Rate", mark.time=T)
+legend(750, .9, c("Male", "Female"), col=c("indianred", "dodgerblue"), lwd=2, bty='n')
+curve(exp_surv_men, from = 0, to = 1000, lwd=2, col="indianred", add=T)
+curve(exp_surv_women, from = 0, to = 1000, lwd=2, col="dodgerblue", add=T)
+```
+
+
+# Semi-parametric
+
+
+::: {.incremental}
+
+- You'll notice that the fit is okay, but there is some discrepancy 
+  - This is because the hazard appears to be **time-varying**.
+  - You can see a kind of "s-curve" which the exponential by construction cannot capture.
+
+- Other parametric models allow for more flexibility in the hazard rate's evolution over time
+  - For example, the **Weibull** model, which adds an additional shape parameter to the hazard to allow it to vary over time actually fits the data quite well!
+
+- But suppose that we want to make very minimal assumptions about the structure of the hazard function -- can we still estimate the relationship between covariates and the hazard?
+
+:::
+
+# Cox Proportional Hazards
+
+- The **Cox proportional hazards model** assumes that covariates enter the hazard log-linearly, but the baseline hazard is unspecified
+
+$$h_i(t) =  h_0(t)\exp(X_i^{\prime}\beta)$$
+
+- $h_0(t)$ is the unknown baseline hazard function.
+- Note that while the baseline hazard is not explicitly identified, the ratio of the hazards of two observations $i$ and $j$ at time $t$ **does not depend on the baseline**
+
+  $$\frac{h_i(t)}{h_j(t)} = \frac{\exp(X_i^{\prime}\beta)}{\exp(X_j^{\prime}\beta)}$$
+
+- The model is **semi-parametric** in that some components are left entirely unspecified...
+  - ... but others are not -- we assume that the covariates act **proportionally** on the hazard irrespective of time.
+
+# Cox Proportional Hazards
+
+- The model is estimated by maximizing a **partial likelihood**
+  - We observe event time $Y_i$ - assume no ties
+
+- The individual partial likelihood is
+
+  $$L_i(\beta) = \frac{\exp(X_i^{\prime}\beta)}{\sum_{k; Y_k \ge Y_i} \exp(X_k^{\prime}\beta)}$$
+
+
+- **Intuitively**: The denominator contains the hazards of all observations in the **risk set** at the event time $Y_i$
+
+- Then the full likelihood is just the product over all the individual partial likelihoods
+
+  $$L(\beta) = \prod_{i=1}^N  \frac{\exp(X_i^{\prime}\beta)}{\sum_{k; Y_k \ge Y_i} \exp(X_k^{\prime}\beta)}$$
+
+# Application
+
+- What does the Cox fit look like
+
+```{r}
+cox_model_sex <- coxph(Surv(time, status) ~ I(sex==2), data=lung) # sex = 2 is a dummy variable for female
+print(cox_model_sex)
+```
+
+- Note that we **don't get** an estimate of the hazard because the baseline is left unspecified
+  - If we want to plot survival curves, we'll need some estimate of $h_0$ using another method (like Kaplan-Meier)
+
+# Application
+
+- Calculate the baseline hazard via Kaplan-Meier and overlay the Cox predicted hazards for men and women
+
+```{r, fig.width=8, fig.height=6, fig.align='center', warning=F}
+plot(survfit(cox_model_sex, newdata = data.frame(sex=c(1,2))), col=c("indianred", "dodgerblue"), xlab="Survival Time", conf.int=T, ylab="Survival Rate", mark.time=T)
+```
+
 
 
