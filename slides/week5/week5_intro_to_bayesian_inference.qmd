@@ -605,7 +605,7 @@ posterior2_ci
 
 
 - For parameters that are constrained to $(0, 1)$, a simple choice would be to sample from the $$\text{Uniform}(0,1)$$
-  - Trivially symmetric since it doesn't depend at all on $\theta$
+  - Trivially symmetric since the density is a constant.
   - But likely to generate bad proposals!
   
 
