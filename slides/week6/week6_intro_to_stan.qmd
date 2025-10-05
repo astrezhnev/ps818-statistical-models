@@ -1,0 +1,933 @@
+---
+title: "Week 6: Intro to Stan"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "October 6, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: true
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+
+---
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(broom)
+options(digits=3)
+knitr::opts_chunk$set(echo = T)
+```
+
+# Previously
+
+::: {.incremental}
+
+- **Bayesian inference**
+  - Parameters of interest are **random** variables (randomness captures "beliefs")
+  - Contrast with **frequentist** approach: parameter is fixed, data is random
+  - **Bayesian** target of inference is the **posterior** distribution $p(\theta | \mathbf{Y})$
+  - **Bernstein-von Mises theorem** - in large samples, bayesian posterior distributions approximate MLE sampling distributions.
+  
+- **Posterior inference**
+  - Some posteriors have an analytically tractable form -- typically we get this through the use of **conjugate priors**
+  - Most posterior distributions are not analytically tractable -- need to do inference **numerically** via sampling
+  - **Markov Chain-Monte Carlo** - Construct a chain of samples that converge to a stationary distribution which happens to be the target posterior.
+  - **Metropolis-Hastings** - An algorithm to generate a chain that approximates a target posterior
+  - **Gibbs Sampling** - Special case of MH where samples are from alternating **conditional distributions**
+
+:::
+
+
+# This week
+
+::: {.incremental}
+
+- **MCMC via Stan**
+  - Stan is a C++ library for specifying statistical models and conducting inference via **Hamiltonian MCMC**
+  - R has *bindings* to Stan via the `rstan` package
+  - Extremely flexible - any model that you can write can be translated to machine code an estimated using an algorithm that converges much more quickly than conventional MH
+
+- **Model diagnostics**
+  - How do we know if our model is good?
+  - Posterior predictive checks
+  - Cross-validation, Leave-one-out CV
+
+- **(Next week): Multilevel models**
+  - What happens when we impose further structure on parameters (e.g. random slopes and intercepts)
+  - Choices of **hyperpriors** governs the extent of **partial pooling** 
+
+:::
+
+
+# Gibbs Sampling Continued
+
+# Aside: Conditional distributions
+
+::: {.incremental}
+
+- When we discussed **Gibbs Sampling** we illustrated the significant gains we can obtain over naive Metropolis-Hastings
+  - Faster convergence, less correlation between samples
+
+- These gains come from being able to derive the form of the conditional distribution of $\theta_k$ given the other parameters $\theta_{-k}$ as well as the data $\mathbf{Y}$.
+
+- Deriving these conditionals often relies on inspecting a density that is proportional to the conditional density and recognizing its form.
+  - To do this, it's useful to remember the connection between **conditional** densities and **joint** densities as well as how **joint** densities factor.
+
+:::
+
+# Aside: Conditional distributions
+
+::: {.incremental}
+
+-  Consider our **normal regression** example, we want to obtain samples from the joint density $f(\beta, \sigma^2 | \mathbf{Y})$
+  - To do so, we need the conditionals $f(\beta | \mathbf{Y}, \sigma^2)$ and $f(\sigma^2 | \mathbf{Y}, \beta)$.
+  - Can we derive them (or at least their distributional forms?)
+
+- Remember the definition of a conditional expectation: joint divided by marginal
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) = \frac{f(\beta, \sigma^2 | \mathbf{Y})}{f(\sigma^2 | \mathbf{Y})}$$
+
+- Since we treat $\sigma^2$ here as a constant, we can write
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto f(\beta, \sigma^2 | \mathbf{Y}) \equiv f(\mathbf{Y} | \beta, \sigma^2)f(\beta, \sigma^2)$$
+
+- where the last part follows from the definition of the posterior
+
+:::
+
+# Aside: Conditional distributions
+
+::: {.incremental}
+
+- Next, remember how distributions factor
+
+  $$f(\beta, \sigma^2) = f(\beta | \sigma^2)f(\sigma^2)$$
+
+- If $\beta$ and $\sigma^2$ are marginally independent,then the joint distribution factors into the **marginals**
+  - But even if they're not independent, we can always factor into a product of conditionals
+
+- So we have 
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto f(\mathbf{Y} | \beta, \sigma^2)f(\beta | \sigma^2) f(\sigma^2)$$
+
+- Again, $\sigma^2$ is a constant here, so that last density drops as a multiplicative constant
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto f(\mathbf{Y} | \beta, \sigma^2)f(\beta | \sigma^2)$$
+
+:::
+
+# Aside: Conditional distributions
+
+::: {.incremental}
+
+- Remember, our special case of the normal model from last week assumed that $\beta$ and $\sigma^2$ are marginally independent
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto f(\mathbf{Y} | \beta, \sigma^2)f(\beta)$$
+
+- And independence of observations gives 
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \bigg[\prod_{i=1}^N f(Y_i | \beta, \sigma^2)\bigg]f(\beta)$$
+
+- The key is finding densities that are given by our model description - now all of these factors are known
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \bigg[\prod_{i=1}^N \underbrace{f(Y_i | \beta, \sigma^2)}_{\text{Normal}(X_i^{\prime}\beta, \sigma^2)}\bigg]\times\underbrace{f(\beta)}_{\text{Normal}(b_0, B_0^{-1})}$$
+
+
+- One useful property from probability theory is that products of two normal PDFs are proportional to the normal PDF
+  - So $\beta | \mathbf{Y}, \sigma^2$ is normal!
+  
+:::
+
+# Normal-normal conjugacy
+
+::: {.incremental}
+
+- To illustrate why the normal is conjugate to the normal, let's plug in the densities and drop multiplicative constants
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \bigg[\prod_{i=1}^N \exp\bigg(-\frac{(Y_i - X_i^\prime \beta)^2}{2\sigma^2}\bigg)\bigg]\times \exp\bigg(-\frac{1}{2}(\beta - b_0)^{\prime}B_0(\beta - b_0)\bigg)$$
+
+- Using properties of the products of exponentials
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \exp\bigg(-\frac{\sum_{i=1}^n(Y_i - X_i^\prime \beta)^2}{2\sigma^2}\bigg)\times \exp\bigg(-\frac{1}{2}(\beta - b_0)^\prime B_0(\beta - b_0)\bigg)$$
+
+- We can write the first term as a quadratic form where $\Sigma$ is a matrix with diagonal terms $\sigma^2$
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \exp\bigg(-\frac{1}{2}(\mathbf{Y} - X\beta)^\prime \Sigma^{-1}(\mathbf{Y} - X\beta)\bigg)\times \exp\bigg(-\frac{1}{2}(\beta - b_0)^\prime B_0(\beta - b_0)\bigg)$$
+
+:::
+
+# Normal-normal conjugacy
+
+::: {.incremental}
+
+- Expand the quadratic form, drop terms that only contain $Y$,and use the fact that $\Sigma^{-1}$ is symmetric.
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \exp\bigg(-\frac{1}{2}\bigg[\beta^\prime \mathbf{X}^\prime \Sigma^{-1} \mathbf{X}\beta + 2\mathbf{Y}^\prime \Sigma^{-1} \mathbf{X}\beta\bigg]\bigg)\times \exp\bigg(-\frac{1}{2}(\beta - b_0)^\prime B_0(\beta - b_0)\bigg)$$
+
+- Since $\Sigma^{-1}$ is a diagonal matrix and using the properties of transposes, we can write the above as:
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \exp\bigg(-\frac{1}{2\sigma^2}\bigg[\beta^\prime \mathbf{X}^\prime \mathbf{X}\beta + 2\beta^\prime \mathbf{X}^\prime \mathbf{Y} \bigg]\bigg)\times \exp\bigg(-\frac{1}{2}(\beta - b_0)^\prime B_0(\beta - b_0)\bigg)$$
+
+
+- A well known result (completing the square) allows us to factor that expression into a familiar quadratic form with $\beta$ and a term that again drops out as a constant (depends only on $\mathbf{X}$ and $\mathbf{Y}$)
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \exp\bigg(-\frac{1}{2\sigma^2}[\beta - (\mathbf{X}^\prime\mathbf{X})^{-1}(\mathbf{X}^\prime\mathbf{Y})]^\prime(\mathbf{X}^\prime\mathbf{X})[\beta - (\mathbf{X}^\prime\mathbf{X})^{-1}(\mathbf{X}^\prime\mathbf{Y})]\bigg)\times \exp\bigg(-\frac{1}{2}(\beta - b_0)^\prime B_0(\beta - b_0)\bigg)$$
+
+:::
+
+# Normal-normal conjugacy
+
+::: {.incremental}
+
+- Now we can combine likelihood and prior using the properties of the sums of quadratic forms (and again dropping constants of proportionality).
+
+  $$f(\beta | \mathbf{Y}, \sigma^2) \propto \exp\bigg(-\frac{1}{2\sigma^2}[\beta - (\mathbf{X}^\prime\mathbf{X} + B_0)^{-1}(B_0b_0 + \mathbf{X}^\prime\mathbf{Y} )]^\prime(\mathbf{X}^\prime\mathbf{X} + B_0)[\beta - (\mathbf{X}^\prime\mathbf{X} + B_0)^{-1}(B_0b_0 + \mathbf{X}^\prime\mathbf{Y})]\bigg)$$
+
+
+- Inspecting this kernel, we can recognize the posterior mean and posterior variance-covariance matrix.
+- **Variance-Covariance matrix**
+
+  $$V = \sigma^2(B_0 + \mathbf{X}^{\prime}\mathbf{X})^{-1}$$
+
+- and **Mean**
+
+  $$\mu = (B_0 + \mathbf{X}^{\prime}\mathbf{X})^{-1}(B_0b_0 + \mathbf{X}^{\prime}\mathbf{Y})$$
+
+- Note again how the posterior distribution combines the data and the prior with the influence of the prior diminishing as the number of observations grows.
+
+- $\sigma^2$ also has a conditional that is inverse-gamma with a similar intuition for the updates, but we'll skip that and keep our random walk sampler for $\sigma^2$ to illustrate the "Metropolis-in-Gibbs" approach.
+
+:::
+
+
+# Revisiting: Predicting Elections
+
+```{r, message=F, warning=F, echo=T}
+# Load the data
+elections <- read_csv("data/us-house-wide.csv")
+
+# Aggregate the house data to counties
+elections_county <- elections %>% group_by(fipscode) %>% summarize(state=state[1], county=county[1], 
+                                                                   total.votes = sum(total.votes),
+                                                                   dem = sum(dem))
+
+# Merge in 2015 Presidential
+pres_2016 <- read_csv("data/clinton_2016_vote.csv")
+elections_county <- elections_county %>% left_join(pres_2016 %>% dplyr::select(county_fips, candidatevotes, totalvotes),
+                                                   by=c(fipscode="county_fips"))
+
+# Generate vote shares
+elections_county$dem2018 <- elections_county$dem/elections_county$total.votes
+elections_county$dem2016 <- elections_county$candidatevotes/elections_county$totalvotes
+
+# Drop missing
+elections_county <- elections_county %>% filter(!is.na(dem2018)&!is.na(dem2016))
+```
+
+
+# Gibbs and Metropolis
+
+- Set up the regression
+
+```{r, message=F, warning=F, echo=T}
+X_mat <- model.matrix(dem2018 ~ dem2016, data=elections_county)
+Y <- elections_county$dem2018
+K <- ncol(X_mat) # Number of beta parameters
+```
+
+- Set up a diffuse prior
+
+```{r, echo=T}
+beta_0 <- rep(0, K)
+B_0 <- diag(rep(1/9, K))
+B_inv_0 <- solve(B_0)
+c_0 = 0.001
+d_0 = 0.001
+```
+
+- Set up the MCMC
+
+```{r, cache=T, echo=T}
+M <- 40000  # Number of MCMC samples
+burnin <- 5000
+beta_mcmc <- matrix(nrow = M, ncol=K) # Vector to store our samples
+beta_mcmc[1,] <- c(0,1) # Pick a starting value
+sigma_mcmc <- rep(NA, M)
+sigma_mcmc[1] <- 1
+```
+
+
+# Gibbs and Metropolis
+
+- Write some functions to evaluate the likelihood and priors
+
+```{r, echo=T}
+log_lik_norm <- function(b, sigma, Y, X){
+  linpred <- X%*%b
+  sum(dnorm(Y, mean=linpred, sd=sigma, log=T))
+}
+```
+
+
+# Gibbs and Metropolis
+
+```{r, cache=T, echo=T}
+set.seed(60637)
+for (i in 1:(M-1)){ # For i in 1:(M-1)
+  ## Beta 
+    ## Gibbs Step!
+    var_b <- solve(t(X_mat)%*%X_mat + B_0)
+    mean_b <- var_b%*%(B_0%*%beta_0 + t(X_mat)%*%Y)
+    beta_mcmc[i+1,] <-  mvtnorm::rmvnorm(1, mean  = mean_b, sigma=(sigma_mcmc[i]^2)*var_b)
+
+  ## Sigma
+    ## Step 1 - Proposal
+    sigma_log <- rnorm(1, mean = log(sigma_mcmc[i]), sd=.01)
+    sigma_star <- exp(sigma_log)
+  
+    ## Step 2 - Accept/Reject
+    lik_star_sigma <- log_lik_norm(beta_mcmc[i+1,], sigma_star, Y, X_mat)
+    lik_current_sigma <- log_lik_norm(beta_mcmc[i+1,], sigma_mcmc[i], Y, X_mat)
+    # The trick here is independence - otherwise if \sigma^2 appeared in the prior for \beta, we'd need another term
+    prior_star_sigma <- log(MCMCpack::dinvgamma(sigma_star^2, shape = c_0/2, scale = d_0/2))
+    prior_current_sigma  <-  log(MCMCpack::dinvgamma(sigma_mcmc[i]^2, shape = c_0/2, scale = d_0/2))
+    
+    ## Accept/reject
+    ar_sigma <- exp(lik_star_sigma + prior_star_sigma - lik_current_sigma - prior_current_sigma)
+    accept_sigma <- rbinom(1,1,min(1,ar_sigma))
+    sigma_mcmc[i+1] <- sigma_star*accept_sigma + sigma_mcmc[i]*(1-accept_sigma)
+    
+}
+beta_mcmc_use <- beta_mcmc[burnin:M,] # Toss our burn-in period
+```
+
+
+# Convergence
+
+- $\beta_1$
+
+```{r, fig.align="center", fig.height=4, fig.width=7}
+plot(y=beta_mcmc_use[,2], x=1:length(beta_mcmc_use[,2]), xlab="Iteration", ylab="beta_1", type="l")
+```
+
+- Much better than before with the naive "random walk" proposal distribution.
+
+
+# Results
+
+$\beta_1$
+
+```{r, fig.align="center", fig.height=4, fig.width=7, warning=F}
+beta_mcmc_out <- as.data.frame(beta_mcmc_use)
+colnames(beta_mcmc_out) <- c("Intercept", "dem2016")
+beta_mcmc_out %>% ggplot(aes(x=dem2016)) +  theme_bw() + xlim(1.02, 1.10) + xlab("2016 Democratic Presidential Vote") + geom_histogram(aes(y=after_stat(density)), bins=50)
+```
+
+
+# Summaries
+
+- Posterior means and 95% credible intervals
+
+```{r, echo=T}
+summary_results <- data.frame(variable = c("Intercept", "dem2016"), pm = colMeans(beta_mcmc_out), 
+                              ci95_lower = apply(beta_mcmc_out, 2, function(x) quantile(x, .025)),
+                              ci95_upper = apply(beta_mcmc_out, 2, function(x) quantile(x, .975)))
+
+summary_results
+```
+
+
+# Intro to Stan/HMC
+
+# Overview of HMC
+
+::: {.incremental}
+
+- **Hamiltonian Monte Carlo** is a method that improves upon the conventional Metropolis-Hastings algorithm by improving the **proposals** such that they are accepted with very high probability
+
+- The method draws on a theoretical core from differential geometry, but it's not strictly necessary to get the intuition for it. 
+  - [Betancourt (2014) "A Conceptual Introduction to Hamiltonian Monte Carlo"](https://arxiv.org/abs/1701.02434) is a good overview for applied researchers (familiarity with statistics but not physics)
+
+- MCMC (ideally) works by 3 general phases 
+  1. From the starting values, reach the "typical set" of parameter values that occupy most of the posterior density mass
+  2. The MCMC traverses the "typical set" of values once.
+  3. Repeated traversals improve the quality of the MCMC approximation.
+
+- Problems arise when Markov Chains 
+  1. Don't traverse high density parts of the posterior
+  2. Get *stuck* in parts of the density.
+  
+:::
+
+# Overview of HMC
+
+- Typical distributions for $Q$ are random walks
+  - In high dimensions, these tend to be **bad** proposals.
+
+- One solution is to choose a low variance for the random walk
+  - This leads to high autocorrelation in the proposals
+
+![](assets/betancourt_1.png){fig-align='center' width=600}
+
+
+
+# Overview of HMC
+
+- What if we could come up with a "direction" to point our proposal (or sequence of proposals) that stayed in the "typical set"
+  - Is there another way to get proposals with an acceptance probability of 1 besides Gibbs sampling?
+
+![](assets/betancourt_2.png){fig-align='center' width=400}
+
+# Overview of HMC
+
+:::{.incremental}
+
+- Instead of sampling just from $p(\theta | \mathbf{Y})$, we'll introduce a set of auxiliary variables $\rho$ and sample from the joint density $p(\rho, \theta | \mathbf{Y})$.
+  - We'll generate samples of $\rho$ and "evolve" $\theta$ in a particular manner.
+
+- That density factors such that if we integrated out the auxiliary variables, we'd get the target.
+
+  $$p(\rho, \theta | \mathbf{Y}) = p(\rho | \theta, \mathbf{Y})p(\theta | \mathbf{Y})$$
+
+- And we'll typically pick a distribution on $\rho$ that is independent of the parameter values.
+
+  $$p(\rho, \theta | \mathbf{Y}) = p(\rho)p(\theta | \mathbf{Y})$$
+
+- If I propose $\rho^*$ randomly, how do I determine $\theta^*$ such that $p(\rho, \theta | \mathbf{Y}) = p(\rho^*, \theta^* |\mathbf{Y})$ and my acceptance probability is $1$?
+
+:::
+
+# Overview of HMC
+
+- The joint density defines a Hamiltonian $H(\rho, \theta)$ which characterizes the target distribution - in the physics analogy, this is the "total energy" of our system.
+
+  $$\begin{align*}H(\rho, \theta) &= -\log(p(\rho, \theta | \mathbf{Y}))\\
+&= - \log(p(\rho)) - \log(p(\theta | \mathbf{Y}))\\
+&= T(\rho) + V(q)\end{align*}$$
+
+
+- Energy is conserved in this system, so if we randomly choose $\rho$ and then jointly evolve $\rho$ and $\theta$ according to **Hamilton's equations**, we'll explore a space of proposals that are guaranteed to accept.
+
+  $$\begin{align*}\frac{d\theta}{dt} &= + \frac{\partial H}{\partial \rho} = \frac{\partial{T}}{\partial{\rho}}\\
+\frac{d\rho}{dt} &= -\frac{\partial H}{\partial \theta} = -\frac{\partial V}{\partial{\theta}}\end{align*}$$
+
+
+# Overview of HMC
+
+- **HMC Algorithm** (in Stan)
+  - Propose $\rho^* \sim \text{MultivariateNormal}(0, M)$
+  - Evolve the joint system of $\rho^*, \theta^*$ using Hamilton's equations for some number of steps 
+  - Metropolis accept/reject the proposed new set of values.
+  
+![](assets/betancourt_4.png){fig-align='center' width=400}
+
+
+
+# Overview of HMC
+
+:::{.incremental}
+
+- **Central intuitions**
+  - Hamiltonian Monte Carlo is designed to generate proposals with **high acceptance probability**
+  - These proposals require knowing the **gradient** of the unnormalized posterior with respect to the parameters
+
+- Analytical computation of the gradient is tedious
+  - Numeric computation can be unstable.
+  - Many modern techniques use **automatic** differentiation
+
+- **Intuition**: Decompose the unnormalized posterior into a series of elementary arithmetic operations and functions where derivatives are trivially known
+  - Use the **chain rule** to construct the gradient from the component functions + their derivatives.
+
+- **Downside**: Can't use HMC for *discrete* parameters (but can often just marginalize those out).
+
+:::
+
+# Overview of Stan
+
+- `Stan` is a C++ library that implements a version of Hamiltonian Monte Carlo
+  - Latest iteration of the "model-to-MCMC" libraries like `JAGS` and `BUGS` (which are gibbs samplers)
+  
+- Key Features
+  1. Language agnostic - has bindings in R, Python, Julia, STATA, etc...
+  2. Fast run-time
+  3. High-level language for specifying models to be converted to C++ code.
+
+- Complications
+  - Running Stan requires you to have the ability to compile C++ code locally
+  - Stan also requires learning a slightly new syntax 
+  
+# Stan resources
+
+- [Installation Quick Start Guide](https://github.com/stan-dev/rstan/wiki/RStan-Getting-Started)
+- [Stan User Guide](https://mc-stan.org/docs/stan-users-guide/index.html)
+- [Stan Reference Manual](https://mc-stan.org/docs/stan-users-guide/index.html)
+- [Stan Functions Reference](https://mc-stan.org/docs/functions-reference/index.html)
+- [A good model building tutorial for social scientists by Jim Savage](https://rpubs.com/jimsavage/stanintro)
+
+
+# Installing Rstan
+
+- We're working with R, so we'll be using the `Rstan` interface to Stan
+- **To Install**
+  - Install the **R-Universe** version directly from [mc-stan.org/install](https://mc-stan.org/install) 
+  - There is a nice guide found at [https://github.com/stan-dev/rstan/wiki/RStan-Getting-Started](https://github.com/stan-dev/rstan/wiki/RStan-Getting-Started)
+  - Follow the instructions specific to your OS!
+
+```{r, eval=F, echo=T}
+# run the next line if you already have rstan installed
+# remove.packages(c("StanHeaders", "rstan"))
+install.packages("rstan", repos = c('https://stan-dev.r-universe.dev', getOption("repos")))
+```
+
+# Installing Rstan
+
+- In order to run Stan, your computer needs to be able to compile C++ code. This requires some auxiliary installs that are dependent on your operating system
+  - **Windows**: On Windows, you need to install `Rtools`. See instructions: [https://github.com/stan-dev/rstan/wiki/Configuring-C---Toolchain-for-Windows](https://github.com/stan-dev/rstan/wiki/Configuring-C---Toolchain-for-Windows)
+  - **Mac**: You need to install `Xcode` from the app store and configure the C++ tool chain [https://github.com/rmacoslib/r-macos-rtools#how-do-i-use-the-installer](https://github.com/rmacoslib/r-macos-rtools#how-do-i-use-the-installer)
+  - **Linux**: You probably already have it, but you need `g++` or `clang++` - either tends to be installed by default or is available from your repositories.
+  
+
+# Writing a Stan program
+
+- Stan programs define a particular statistical model through a sequence of blocks that identify the data (modeled and unmodeled), parameters, and statistical model.
+  - These are then translated to C++ and compiled. Because Stan uses C++, variables need to be declared differently from a language like R.
+  - C++ is **statically typed** - which means that the *type* of variable needs to be fixed at initialization.
+  
+# Writing a Stan program
+
+- Primary variable types and their syntax
+  - `int`: Integer and `real`: continuous values
+  - `vector` and `matrix` for real-valued column vectors and matrices
+  - `array` allows you to generate an array structure for any arbitrary type (like an integer) (note pre-2.26 Stan used a different syntax for this)
+
+- If variables are constrained, these constraints can be added via `<upper = .>` and `<lower = .>` statements during variable declaration.
+
+- **Minor notes**
+  - Stan programs in R can be saved as separate files (with a `.stan` suffix) or in a length 1 character vector (directly typed into R).
+  - Lines end with semi-colons `;`
+  - `//` denotes a comment
+
+# Program blocks
+
+- `data`: Defines the modeled (e.g. $Y$) and unmodeled data (e.g. $X$) that are used in the model.
+  - Includes any important constants (like sample size $N$) or number of parameters $K$ that you don't hard-code.
+  - When compiling and estimating the model, you'll pass in R objects for each entry defined in `data` through a list
+
+- Example data block (for a logistic regression):
+
+```stan
+data{
+  int N; // number of observations
+  int K; // number of covariates
+  matrix[N, K] X; //matrix of covariates
+  array[N] int<lower=0, upper=1> y; // binary outcome
+}
+```
+  
+
+# Program blocks
+
+- `parameters`: Defines the parameters of interest whose posterior density we're trying to sample from
+
+- Example parameters block (for a logistic regression):
+
+```stan
+parameters{
+  vector[K] beta; // beta coefficients
+}
+```
+  
+# Program blocks
+
+- `model`: Defines the statistical distributions of the observed data + the parameters
+  - Likelihood and prior distributions
+
+- Example model block (for a logistic regression):
+
+```stan
+model{
+  beta ~ normal(0, 10); // normal prior
+  y ~ bernoulli_logit(X * beta); //bernoulli outcome (logit link)
+}
+```
+
+# Program blocks
+
+- We can use for loops as well (can be useful for more complicated DGPs)
+
+```stan
+model{
+  for (k in 1:K){
+    beta[k] ~ normal(0, 10);
+  }
+  for (n in 1:N){
+    y[n] ~ bernoulli_logit(X[n] * beta);
+  }
+}
+```
+  
+
+# Program blocks
+
+- Other useful (but not required) blocks
+  - `functions`: Contains user-defined functions that can be used within the remainder of the model definition (or made available to R)
+  - `transformed data`, `transformed parameters`: Contains deterministic transformations of either the data or the parameters.
+  - `generated quantities`: Contains functions that generate or simulate quantities from the model after estimation (e.g. predictions, posterior means, model summary statistics)
+
+# Application: Elections
+
+- Let's implement the "Normal Regression" model in Stan
+  
+```{r, echo=T}
+model_structure <- "
+data {
+  int N; // number of observations
+  int K; // number of covariates
+  matrix[N, K] X; //covariate matrix
+  vector[N] y; //outcome vector
+}
+parameters {
+  vector[K] beta; //regression coefficients
+  real<lower = 0> sigma; // standard deviation
+}
+model {
+  beta ~ normal(0, 3); // multivariate normal prior
+  sigma ~ inv_gamma(0.001/2, 0.001/2); // inverse gamma
+  y ~ normal(X * beta, sigma); // * is matrix multiplication if terms are matrices
+}
+generated quantities {
+  array[N] real y_rep = normal_rng(X * beta, sigma);
+  vector[N] log_lik;
+  for (n in 1:N) log_lik[n] = normal_lpdf(y[n] | X[n, ] * beta, sigma);
+}
+"
+```
+
+
+# Application: Elections
+
+- Load the relevant packages
+
+```{r, warning=F, message=F, results=F, echo=T}
+library(rstan)
+```
+
+- Pass the actual parameters as a list
+
+```{r, echo=T}
+data_source <- list(N = nrow(X_mat), K = ncol(X_mat), X=X_mat, y=Y)
+```
+
+# Application: Elections
+
+- Run Stan! 
+
+```{r, echo=T, message=F, warning=F, cache=T, results=F, echo=T}
+model_fit <- stan(
+  model_code = model_structure,  # Stan code
+  data = data_source,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 2500,            # total number of iterations per chain
+  cores = 4,              # number of cores (could use one per chain - by default uses however many you have)
+  refresh = 0,          # no progress shown
+  seed = 53703
+  )
+```
+
+
+# Convergence
+
+- The `traceplot` function lets us plot trace plots of any parameters or generated quantities. Let's do it for $\beta$
+
+```{r, fig.align="center", fig.width=10, fig.height=6, echo=T}
+traceplot(model_fit, pars = c("beta"))
+```
+
+
+# Summary
+
+- Summarize the fit
+
+```{r, echo=T}
+print(model_fit, pars = c("beta","sigma"))
+```
+
+# Summary
+
+- Plot the results
+
+```{r, message=F, fig.align="center", fig.width=7, fig.height=5}
+stan_plot(model_fit, pars = c("beta[2]"))
+```
+
+# Summary
+
+- There's cooler-looking stuff in `bayesplot`
+
+```{r, message=F, echo=T}
+library(bayesplot)
+```
+
+```{r, message=F, fig.align="center", fig.width=7, fig.height=4, cache=T, echo=T}
+coef_plot <- mcmc_areas(model_fit, pars = c("beta[2]"))
+coef_plot
+```
+
+
+# Model diagnostics
+
+
+# Posterior predictive distribution
+
+- A very useful quantity to obtain is the **predictive** distribution of $y$ given the model.
+
+  $$f(\tilde{y} | \mathbf{Y}) =\int f(\tilde{y}, \theta | \mathbf{Y}) d\theta = \int f(\tilde{y} | \mathbf{Y}, \theta) f(\theta | \mathbf{Y}) d\theta$$
+
+- Suppose our prediction target is the in-sample distribution of the covariates
+  - We can get the posterior predictive distribution directly from our MCMC algorithm by **drawing** a value of $y$ for each value of $\theta$ that we sample.
+
+- (e.g.) for the logit
+
+```stan
+generated quantities {
+  y_rep ~ bernoulli_logit_rng(X * beta); //generate coin flips for each sample
+}
+```
+
+- It is common to use the posterior predictive distribution as a model diagnostic ("posterior predictive checking")
+  1. Check in-sample fit: Does the model actually reproduce the distribution of the data?
+  2. Check against simulated data: Does the model recover the simulated distributions?
+
+# Posterior predictive check
+
+- Pull the `y_rep` from the model (in the form of a list)
+
+```{r, echo=T}
+y_ppc <- rstan::extract(model_fit)$y_rep
+```
+
+- Calculate the upper and lower credible intervals
+
+```{r, echo=T}
+y_ppc_ci <- t(apply(y_ppc, 2, function(x) quantile(x, c(.025, .975))))
+```
+
+
+- What's the share that cover the truth?
+
+```{r, echo=T}
+cover_95 <- y_ppc_ci[,1]<Y&Y<y_ppc_ci[,2]
+mean(cover_95)
+```
+
+
+# Posterior predictive check
+
+- What's the root mean squared deviation from the truth?
+
+```{r, echo=T}
+sqd_error <- apply((Y - t(y_ppc))^2, 2, mean)
+print(sqrt(mean(sqd_error)))
+```
+
+- Make a dataframe for the predictive "ribbon" plot
+
+```{r, echo=T}
+elections_county$lowerppd <- y_ppc_ci[,1]
+elections_county$upperppd <- y_ppc_ci[,2] 
+```
+
+# Posterior predictive check
+
+- Plot the posterior predictive intervals against the data
+
+```{r, fig.align="center", fig.height=7, fig.width=9, warning=F,echo=F, cache=T}
+elections_county %>% ggplot(aes(y=dem2018, x=dem2016)) + geom_ribbon(aes(x=dem2016, ymin=lowerppd, ymax=upperppd), alpha=.2, col="orange") + geom_point(cex=.6, alpha=1, col="blue")  + geom_abline(aes(intercept=mean(rstan::extract(model_fit, "beta[1]")$`beta[1]`), slope=mean(rstan::extract(model_fit, "beta[2]")$`beta[2]`))) + theme_bw() + xlim(0, 1) + ylim(0,1) + xlab("2016 Democratic Presidential Vote") +ylab("2018 Democratic House Vote")
+```
+
+# Posterior predictive check
+
+- Or plot the empirical density vs. the posterior predicted curves
+
+```{r, fig.align="center", fig.height=6, fig.width=8, warning=F, cache = T}
+bayesplot::ppc_dens_overlay(y = elections_county$dem2018, yrep = y_ppc[1:25,])
+```
+
+
+# Model Diagnostics
+
+- There are two general approaches to evaluating model quality and comparing the predictive power of two or more statistical models given the same data
+  - **Information criteria**
+  - **Cross-validation**
+
+- Both apporaches actually share common goals
+  - **Reward** quality of predictions
+  - **Penalize** model complexity
+
+- We want to avoid models that **overfit** to the observed data 
+  - Information criteria address this with an explicit penalty term for the number of parameters
+  - Cross-validation methods do this by evaluating fit on a "held-out" part of the data that's not used to estimate the model.
+
+
+# Information Criteria
+
+- Frequentist/MLE Inference - the **Akaike Information Criterion**
+  
+  $$\text{AIC} = 2k - 2\ell(\hat{\theta})$$
+  
+  - $k$ is the number of parameters and $\ell(\hat{\theta})$ is the value of the maximized log-likelihood.
+  - Pick the model with the **lowest** AIC
+
+- Bayesian Inference - the **Deviance Information Criterion**
+
+  $$\text{DIC} = 2p_{DIC} - 2\log p(y | \hat{\theta}_{\text{PM}})$$
+
+  - $\hat{\theta}_{\text{PM}}$ is the posterior mean and 
+  - the "effective number of parameters" is $p_{DIC} = (\log p(y | \hat{\theta}_{\text{PM}}) - E_{\text{post}}[\log p(y|\theta)])$
+
+# Log-predictive density
+
+- In general, a very common objective function for evaluating the quality of model "fit" in a Bayesian setting is the **log-predictive density** or $\log p(y | \theta)$
+  - Think of it as a more general version of criteria like "mean-squared error"
+
+
+- For a new "out-of-sample" $\tilde{y}_i$, the posterior predictive distribution is
+
+  $$\log p_{\text{post}} (\tilde{y}_i) = \log \int p(\tilde{y}_i | \theta) \times p_{\text{post}}(\theta)d\theta$$
+
+
+
+- We want to pick a model that has a high **expected log pointwise-predictive density** -- for a "new" size $n$ sample of observation drawn from a common distribution $f(\tilde{y}_i)$,
+
+  $$\text{elppd} = \sum_{i=1}^n E_f[\log p_{\text{post}} (\tilde{y}_i)] = \sum_{i=1}^n\int \log p_{\text{post}} (\tilde{y}_i)f(\tilde{y}_i)d\tilde{y}_i$$
+
+
+- Our goal is to try to estimate this from the data that we have.
+
+
+
+# Estimating elppd
+
+- One approach would be to use the "in-sample" fit criterion using in-sample observations $y_i$
+
+$$\text{lppd} = \sum_{i=1}^n \log p_{\text{post}} (y_i)$$
+
+
+- We can calculate it by averaging over our $S$ posterior samples
+
+$$\widehat{\text{lppd}} = \sum_{i=1}^n \log \bigg( \frac{1}{S} \sum_{s=1}^S p(y_i | \theta^s)\bigg)$$
+
+
+- But here we know that it's going to be biased for the "out-of-sample" predictive error due to over-fitting.
+
+
+# Estimating elppd
+
+- An improvement would be to correct the "in-sample" fit using a measure of the model complexity
+  - This is the intuition behind AIC, DIC, (and other information criteria like WAIC)
+
+
+- An alternative would be to use **cross-validation**:
+  - Split the sample into $K$ "folds" (typical choice is 10)
+  - For each fold $k$, estimate the model on the $K-1$ other folds 
+  - Using that model, calculate the log-predictive density for the observations in the $k$th fold
+  - The $k$th fold is the "held-out" (or "test" set), the $K-1$ remaining folds are the "training" set
+
+- When $K = N$, this is often known as **"leave-one out" cross-validation**
+
+
+# Leave-one-out CV 
+
+- From Vehtari, Gelman and Gabry (2017), our "leave-one-out" estimate of the expected log predictive density is:
+
+$$\text{elpd}_{\text{loo}} = \sum_{i=1}^n \log p(y_i | y_{-i})$$
+
+- In principle, this requires re-fitting the model to $N$ datasets (with a single observation removed). However, it is possible to obtain an estimate of $\log p(y_i | y_{-i})$ using the full model fit. Note:
+
+$$p(y_i | y_{-i}) = \int p(y_i | \theta) p(\theta | y_{-i}) d\theta$$
+
+
+
+- We can calculate $p(y_i | \theta)$ for a given draw of theta.
+  - However, we only have draws from $p(\theta | y)$ (our posterior).
+  - The solution is to re-weight our draws such that, averaging over them yields an integral over $p(\theta | y_{-i})$
+
+
+# Leave-one-out CV 
+
+- Ultimately, we need to re-weight by $\frac{p(\theta_s | y_{-i})}{p(\theta_s | y)}$. Gelfand, Dey and Chang (1992) show that under conditional independence in the model:
+
+  $$\frac{p(\theta_s | y_{-i})}{p(\theta_s | y)} =  \frac{p(\theta_s | y_{-i})}{p(\theta_s | y_i, y_{-i})} \propto \frac{p(\theta_s | y_{-i})}{p(y_i | \theta_s)p(\theta_s | y_{-i})} = \frac{1}{p(y_i | \theta_s)}$$
+
+- Let $r^s_i = \frac{1}{p(y_i | \theta^s)}$ or the importance weight calculated for monte carlo sample $s$
+- Then our monte carlo estimate of $p(y_i | y_{-i})$ is
+
+  $$p(y_i | y_{-i}) = \frac{\sum_{s=1}^S r_i^s p(y_i | \theta^s)}{\sum_{s=1}^S r_i^s}$$
+
+- Unfortunately, these importance weights are very poorly behaved (high variance). 
+- Vehtari, Gelman and Gabry (2017) propose an alternative method for estimating the importance weights: **pareto-smoothed-importance-sampling** (PSIS)
+  - Fit a Pareto distribution to the distribution of the importance ratio weights to stablize the variance of the weights.
+
+- This PSIS-LOO cross-validation method is implemented in the `loo` R package.
+
+  
+# Leave-one-out CV 
+
+- In order to use `loo`, we need the log-likelihood evaluated at each observation. This comes by default in canned `rstanarm` or `brms` models but for custom models we need to specify to return it in the `generated quantities` block
+- For the typical normal regression:
+
+```stan
+vector[N] log_lik;
+for (n in 1:N) log_lik[n] = normal_lpdf(y[n] | X[n, ] * beta, sigma);
+```
+
+- But this will depend on the *actual* log-likelihood of the model
+
+
+# Leave-one-out CV 
+
+- Once specified, we can obtain an estimate of the expected log predictive accuracy 
+
+```{r, warning=F, message=F, cache=T, echo=T }
+library(loo)
+```
+
+```{r, warning=F, message=F, cache=T, echo=T}
+loo_reg <- loo(model_fit, pars="log_lik")
+loo_reg$estimates
+```
