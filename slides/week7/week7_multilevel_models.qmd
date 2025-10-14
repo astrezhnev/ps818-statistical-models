@@ -85,8 +85,6 @@ knitr::opts_chunk$set(echo = T)
 
 - **Dynamic regression**
   - Modeling dependence in the parameters over time
-  - Autoregressive models
-  - Latent factor models
 
 :::
 
@@ -698,8 +696,33 @@ loo_compare(loo_varslope ,loo_varint, loo_reg)
 5. Predict using the model for each cell in the post-stratification frame
 6. Aggregate to get predictions for each small area
 
+# Dynamic Models
 
 
+# Dynamic models
+
+- Another way that we can impose **hierarchy** via prior structure is through **time**
+  - Parameters at time $t$ and parameters at time $t-1$ should be **related** in some way.
+
+- This idea appears in a lot of different places with a lot of different applications
+  - Dynamic (linear/nonlinear) models
+  - State-space models
+  - Hidden Markov Models
+  
+- **Core modelling idea**
+  - The outcome $Y_{it}$ is a function of some **error** $\epsilon_{it}$ and a **hidden state** $\theta_{t}$
+  - The **hidden state** $\theta_{t}$ evolves as a function of $\theta_{t-1}$ and some other error $\omega_{t}$
+  
+# Application: Polling Aggregation
+
+```{r}
+polls2012 <- read_csv("data/national_polls_2012.csv")
+```
 
 
+# Dynamic Binomial Model
+
+- This is a **much simpler** version of the full state-and-national polling model used by The Economist (and now [FiftyPlusOne](https://fiftyplusone.news/))
+  - For more info, see: [Heidemanns, M., Gelman, A., & Morris, G. E. (2020). An updated dynamic Bayesian forecasting model for the US presidential election. Harvard Data Science Review, 2(4).](https://sites.stat.columbia.edu/gelman/research/published/Harvard_Data_Science_Review.pdf)
+  - Also check out the [old Github repository](https://github.com/TheEconomist/us-potus-model) for the actual model and Stan code!
 
