@@ -899,7 +899,7 @@ plot_usmap(regions="states", data= state_summaries) + scale_fill_viridis(option=
   
 - **Evolution equation** $f(\theta_t | \theta_{t-1})$
 
-  $$\theta_{t} \sim \text{Normal}(\theta_t, \sigma^2_{\theta})$$
+  $$\theta_{t} \sim \text{Normal}(\theta_{t-1}, \sigma^2_{\theta})$$
   
 - We want to do inference on the posterior $f(\theta_t | Y)$
 

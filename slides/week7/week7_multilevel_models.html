@@ -2117,7 +2117,7 @@ scale reduction factor on split chains (at convergence, Rhat = 1).</code></pre>
 <li><p><strong>Outcome equation</strong> <span class="math inline">\(f(Y_t| \theta_t)\)</span></p>
 <p><span class="math display">\[Y_{t} \sim \text{Normal}(\theta_{t}, \sigma^2_{Y})\]</span></p></li>
 <li><p><strong>Evolution equation</strong> <span class="math inline">\(f(\theta_t | \theta_{t-1})\)</span></p>
-<p><span class="math display">\[\theta_{t} \sim \text{Normal}(\theta_t, \sigma^2_{\theta})\]</span></p></li>
+<p><span class="math display">\[\theta_{t} \sim \text{Normal}(\theta_{t-1}, \sigma^2_{\theta})\]</span></p></li>
 <li><p>We want to do inference on the posterior <span class="math inline">\(f(\theta_t | Y)\)</span></p></li>
 </ul>
 </section>
