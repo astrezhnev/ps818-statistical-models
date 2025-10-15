@@ -696,8 +696,185 @@ loo_compare(loo_varslope ,loo_varint, loo_reg)
 5. Predict using the model for each cell in the post-stratification frame
 6. Aggregate to get predictions for each small area
 
-# Dynamic Models
+# Post-stratification
 
+- The easiest approach to adjusting a non-representative survey is to weight to match the **known** **joint** distribution of $x$ in the population $f_{\mathcal{U}}(\mathbf{x})$
+  - This requires a lot of auxiliary information about the target - typically obtained from high-quality census data
+  - (e.g.) U.S. Census Public-Use Microdata: What is the share of Black, college educated, 30-45 year olds in Massachusetts?
+
+- In post-stratification, we divide our sample up into $C$ **cells** $c$ that are mutually exclusive and exhaustive.
+  - $\tilde{T}_{\mathbf{x}} = \{\tilde{P}_{1}, \tilde{P}_2, \dotsc, \tilde{P}_{C}\}$ is our population distribution of these cells
+
+- Our **sampling/response model** assumes that **within** each of these cells we have a simple-random sample from that particular stratum of the population
+  - There may be variation in non-response or over/under-sampling, but only **across** cells
+  - "post"-stratification because the intuition is akin to a design where we actually *did* stratify ex-ante
+
+- Our **measurement model** assumes we observe the joint distribution of auxiliary variables $\mathbf{x}$ in the target population
+  - Difficult in many cases!
+  
+
+# Post-stratification
+
+- Two ways to think of post-stratification:
+- **First** - Let $\hat{\theta}_{y}^{c}$ denote our estimator for the population mean **within** cell $c$ 
+  - Then, our post-stratification estimator $\hat{\theta}_{y}^{PS}$ is:
+  
+$$\hat{\theta}_{y}^{PS} = \sum_{c=1}^C \tilde{P}_{c} \hat{\theta}_{y}^{c}$$
+
+- Alternatively, we'll sometimes write $\tilde{P}_c = \frac{\tilde{N}_c}{\tilde{N}}$ where $\tilde{N}$ is the size of the population and $\tilde{N}_c$ is the number of units in that cell.
+
+$$\hat{\theta}_{y}^{PS} = \sum_{c=1}^C \frac{\tilde{N}_c}{\tilde{N}} \hat{\theta}_{y}^{c}$$
+
+- Fixed "constant" weights on the within-cell estimators.
+
+# Post-stratification
+
+- **Second** - We can think of it as weighting individual observations using our adjustment weights $\tilde{w}^{PS}_i$
+- Let $c(i)$ denote the class to which unit $i$ belongs. Then the post-stratification weights are
+
+$$\tilde{w}^{PS}_i = (\tilde{P}_{c(i)}/\hat{P}^{S}_{c(i)}) \times d_i$$
+
+where $\hat{P}^{S}_{c(i)}$ is the estimated **in-sample** proportion of observations in class $c$ 
+
+- When design weights are constant, $\hat{P}^{S}_{c(i)}$ is just the sample mean of the indicator of class membership $\mathcal{1}_{i \in c}$ 
+  - More generally, you can write it as $\hat{P}^{S}_{c(i)} = (\sum_{i=1}^N  d_i \mathcal{1}_{i \in c})/(\sum_{i=1}^N d_i)$
+
+- **Intuition**
+  - The weights **up-weight** observations that are under-represented in the sample relative to the target population
+  - The weights **down-weight** observations that are over-represented in the sample relative to the target population.
+
+# Example: CCES 2020
+
+- Our **unweighted** average Trump approval in the 2020 CCES for each state:
+
+```{r, echo = F, warning=F, message=F, fig.width=8, fig.height=6, fig.align="center"}
+library(usmap)
+library(ggplot2)
+library(viridis)
+cces <- read_csv("data/CCES_subset.csv") %>% filter(!is.na(trumpApprove))
+cces$educ_bin[cces$educ_bin == "College degree"] <- "College graduate" # Fix a naming inconsistency 
+
+state_summaries <- cces %>% group_by(inputstate) %>% summarize(values= mean(trumpApprove)*100) %>% rename(fips = inputstate) %>% mutate(fips = str_pad(fips, 2,pad="0"))
+plot_usmap(regions="states", data= state_summaries) + scale_fill_viridis(option="A",name = "Trump Approval", label = scales::comma) +
+  theme(legend.position = "right")
+```
+
+
+# Example: CCES 2020
+
+- Let's fit a regression model 
+  - We'll use the `brms` package which has pre-existing implementations of popular models like the random slopes/random intercepts generalized linear mixed model
+  
+- We'll fit a simple logistic regression with coefficients on gender, age and education as well as a random intercept for state
+
+```{r, message=F, warning=F, results=F}
+library(brms)
+```
+
+```{r, cache=T, message=F, warning=F, results=F, echo=T}
+state_mlm <- brm(trumpApprove ~ factor(gender_bin) + factor(age_bin) + factor(educ_bin) +  (1 | inputstate), 
+                           family = bernoulli(), data=cces, cores=4, warmup=1000, iter=2000)
+```
+
+
+# Model diagnostics
+
+- Summarize the results
+
+```{r}
+summary(state_mlm)
+```
+
+
+# Model diagnostics
+
+- Check convergence
+
+```{r, fig.align="center", fig.height=6, fig.width=10}
+plot(state_mlm, variable = "b_factorgender_binMale")
+```
+
+
+# Generating the post-stratification frame
+
+- We'll use ACS 5-year microdata data at the state level to construct our post-stratification frame for each state
+
+```{r, message=F, warning=F, echo=T}
+acs_state_targets <- read_csv("data/ACS_2020_microdata_by_state.csv") %>% filter(!is.na(Gender))
+fips_codes <- read_csv("data/us-state-ansi-fips.csv")
+acs_state_targets <- acs_state_targets %>% left_join(fips_codes, by=c(State="stname"))
+acs_state_targets$inputstate <- as.numeric(acs_state_targets$st)
+acs_state_targets <- acs_state_targets %>% pivot_longer(c(`18-29`, `30-44`, `45-64`, `65+`))
+acs_state_targets <- acs_state_targets %>% rename(gender_bin = Gender, educ_bin = Education, age_bin = name, Count=value)
+acs_state_targets <- acs_state_targets %>% mutate(prop_us = Count/sum(Count))
+acs_state_targets <- acs_state_targets %>% group_by(inputstate) %>% mutate(prop_state = Count/sum(Count)) %>% ungroup()
+```
+
+
+# Generating the post-stratification frame
+
+- Each row contains a row for each **state** x **age** x **gender** x **education** combination
+
+```{r, message=F, warning=F, echo=T}
+kable(head(acs_state_targets))
+```
+
+# Predicting with the model
+
+- Use the model to make predictions on each row of our post-stratification frame
+
+```{r, message=F, warning=F, echo=T}
+acs_state_targets$predict_mlm <- predict(state_mlm, newdata=acs_state_targets)[,1]
+```
+
+- Aggregate the predictions by the stratum shares to get state-level estimates!
+
+```{r, echo=T}
+mrp_states <- acs_state_targets %>% group_by(st) %>% summarize(trumpApproveMLM = sum(predict_mlm*prop_state)*100) %>% rename(fips=st)
+```
+
+# Compare
+
+- Use the model to make predictions on each row of our post-stratification frame
+
+```{r, message=F, warning=F, echo=T}
+state_summaries %>% left_join(mrp_states, by="fips")
+```
+
+
+# Visualize
+
+- Our **multilevel regression + post-stratification** estimates
+
+```{r, echo = F, warning=F, message=F, fig.width=8, fig.height=6, fig.align="center"}
+plot_usmap(regions="states", data= mrp_states, values="trumpApproveMLM") + scale_fill_viridis(option = "A", name = "Trump Approval", label = scales::comma, limits=c(10, 60)) +
+  theme(legend.position = "right")
+```
+
+# Visualize
+
+- Compare with unweighted
+
+```{r, echo = F, warning=F, message=F, fig.width=8, fig.height=6, fig.align="center"}
+state_summaries <- cces %>% group_by(inputstate) %>% summarize(values= mean(trumpApprove)*100) %>% rename(fips = inputstate) %>% mutate(fips = str_pad(fips, 2,pad="0"))
+plot_usmap(regions="states", data= state_summaries) + scale_fill_viridis(option="A",name = "Trump Approval", label = scales::comma, limits=c(10, 60)) +
+  theme(legend.position = "right")
+```
+
+# How to improve this model
+
+- We've provided a very simple example of an MrP model but there are a lot of ways it can be improved
+  1. More group-level predictors (e.g. Trump state-level vote share)
+  2. Individual-level interactions in the model + partial-pooling on the coefficients
+  3. Actually knowing the joint distribution of the demographics in each state!
+  4. Pool state-level means to regional rather than a common "grand" mean.
+  5. Many more possibilities...
+
+- More generally, we have a dataset where even within each state, we have many observations to work with, so the model isn't that necessary
+  - MrP is most powerful when there are **very few** respondents from a particular small area in our data
+
+
+# Dynamic Models
 
 # Dynamic models
 
@@ -713,16 +890,513 @@ loo_compare(loo_varslope ,loo_varint, loo_reg)
   - The outcome $Y_{it}$ is a function of some **error** $\epsilon_{it}$ and a **hidden state** $\theta_{t}$
   - The **hidden state** $\theta_{t}$ evolves as a function of $\theta_{t-1}$ and some other error $\omega_{t}$
   
-# Application: Polling Aggregation
+# Dynamic linear model
 
-```{r}
-polls2012 <- read_csv("data/national_polls_2012.csv")
+- The **classic** linear form of the model
+- **Outcome equation** $f(Y_t| \theta_t)$
+
+  $$Y_{t} \sim \text{Normal}(\theta_{t}, \sigma^2_{Y})$$
+  
+- **Evolution equation** $f(\theta_t | \theta_{t-1})$
+
+  $$\theta_{t} \sim \text{Normal}(\theta_t, \sigma^2_{\theta})$$
+  
+- We want to do inference on the posterior $f(\theta_t | Y)$
+
+# Illustration - Simulated data
+
+```{r, echo=T}
+set.seed(53703)
+Time <- 50
+sim_data <- data.frame(Time = 1:Time, Y= NA, theta = NA)
+theta_0 <- 0
+sigma_theta <- 2
+sigma_Y <- 4
+sim_data[1,]$theta <- rnorm(1, theta_0, sigma_theta)
+sim_data[1,]$Y <- rnorm(1, sim_data[1,]$theta, sigma_Y)
+for (t in 2:Time){
+  sim_data[t,]$theta <- rnorm(1, sim_data[t-1,]$theta, sigma_theta)
+  sim_data[t,]$Y <- rnorm(1, sim_data[t,]$theta, sigma_Y)
+}
 ```
 
+# Illustration - Stan code
+
+```{r, echo=T}
+stan_dlm <- "data{
+  int N; // number of time periods
+  vector[N] y; // observed outcome
+  real prior_sigma_Y; //scale parameter for sigma Y prior
+  real prior_sigma_theta; //scale parameter for sigma theta prior
+}
+parameters{
+  real<lower = 0> sigma_Y; // outcome variance
+  real<lower = 0> sigma_theta; // smoothing variance
+  vector[N] theta; // latent state
+}
+model{
+  sigma_Y ~ cauchy(0, prior_sigma_Y);
+  sigma_theta ~ cauchy(0, prior_sigma_theta);
+  theta[1] ~ normal(0, sigma_theta);
+  for (n in 2:N){
+    theta[n] ~ normal(theta[n-1], sigma_theta);
+  }
+  for (n in 1:N){
+    y[n] ~ normal(theta[n], sigma_Y);
+  }
+}
+"
+```
+
+# Illustration - Stan
+
+- Let's try a relatively diffuse Cauchy prior (scale = $2.5$ for both)
+
+```{r, echo=T}
+dlm_data <- list(y = sim_data$Y, N = length(sim_data$Y),
+                 prior_sigma_Y = 2.5,
+                 prior_sigma_theta = 2.5)
+```
+
+```{r, message=F}
+model_dlm <- stan(
+  model_code = stan_dlm,  # Stan code
+  data = dlm_data,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 2500,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+# Illustration - Stan
+
+- Let's get the estimated $\theta$ plus credible intervals
+
+```{r, echo=T}
+theta_mat <- extract(model_dlm)$theta
+theta_pm <- colMeans(theta_mat)
+theta_95 <- apply(theta_mat, 2, function(x) quantile(x, c(.025, .975)))
+```
+
+# Illustration - Visualization
+
+```{r}
+plot_data <- data.frame(Y = sim_data$Y, Time = 1:Time, theta <- theta_pm, theta_lower = theta_95[1,], theta_upper = theta_95[2,])
+plot_data %>% ggplot(aes(x=Time, y=Y)) + geom_point() + geom_line(aes(y=theta), col="indianred", lwd=2) + geom_ribbon(aes(ymin=theta_lower, ymax=theta_upper), alpha=.2, col="indianred") + theme_minimal()
+```
+
+# Changing the prior
+
+- What happens if instead of estimating the smoothing variance, we controlled it directly.
+
+```{r, echo=T}
+stan_dlm_2 <- "data{
+  int N; // number of time periods
+  vector[N] y; // observed outcome
+  real prior_sigma_Y; //scale parameter for sigma Y prior
+  real<lower = 0>  sigma_theta; // smoothing parameter
+}
+parameters{
+  real<lower = 0> sigma_Y; // outcome variance
+  vector[N] theta; // latent state
+}
+model{
+  sigma_Y ~ cauchy(0, prior_sigma_Y);
+  theta[1] ~ normal(0, sigma_theta);
+  for (n in 2:N){
+    theta[n] ~ normal(theta[n-1], sigma_theta);
+  }
+  for (n in 1:N){
+    y[n] ~ normal(theta[n], sigma_Y);
+  }
+}
+"
+```
+
+# Changing the prior
+
+```{r, echo=T}
+dlm_data_2 <- list(y = sim_data$Y, N = length(sim_data$Y),
+                 prior_sigma_Y = 2.5,
+                 sigma_theta = .5)
+```
+
+```{r}
+model_dlm_tight <- stan(
+  model_code = stan_dlm_2,  # Stan code
+  data = dlm_data_2,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 2500,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+```{r, echo=T}
+theta_mat <- extract(model_dlm_tight)$theta
+theta_pm <- colMeans(theta_mat)
+theta_95 <- apply(theta_mat, 2, function(x) quantile(x, c(.025, .975)))
+```
+
+# Changing the prior
+
+```{r}
+plot_data <- data.frame(Y = sim_data$Y, Time = 1:Time, theta <- theta_pm, theta_lower = theta_95[1,], theta_upper = theta_95[2,])
+plot_data %>% ggplot(aes(x=Time, y=Y)) + geom_point() + geom_line(aes(y=theta), col="indianred", lwd=2) + geom_ribbon(aes(ymin=theta_lower, ymax=theta_upper), alpha=.2, col="indianred") + theme_minimal()
+```
+
+# Changing the prior
+
+```{r, echo=T}
+dlm_data_3 <- list(y = sim_data$Y, N = length(sim_data$Y),
+                 prior_sigma_Y = 2.5,
+                 sigma_theta = 4)
+```
+
+```{r}
+model_dlm_tight <- stan(
+  model_code = stan_dlm_2,  # Stan code
+  data = dlm_data_3,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 2500,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+```{r, echo=T}
+theta_mat <- extract(model_dlm_tight)$theta
+theta_pm <- colMeans(theta_mat)
+theta_95 <- apply(theta_mat, 2, function(x) quantile(x, c(.025, .975)))
+```
+
+# Changing the prior
+
+```{r}
+plot_data <- data.frame(Y = sim_data$Y, Time = 1:Time, theta <- theta_pm, theta_lower = theta_95[1,], theta_upper = theta_95[2,])
+plot_data %>% ggplot(aes(x=Time, y=Y)) + geom_point() + geom_line(aes(y=theta), col="indianred", lwd=2) + geom_ribbon(aes(ymin=theta_lower, ymax=theta_upper), alpha=.2, col="indianred") + theme_minimal()
+```
+
+# Application: Polling Aggregation
+
+```{r, warning=F, echo=F}
+library(lubridate)
+polls2012 <- read_csv("data/all_polls_2012.csv")  %>% filter(state == "--")
+polls2012$end.date <- mdy(polls2012$end.date)
+polls2012$obama.2way <- polls2012$obama/(polls2012$obama + polls2012$romney)
+polls2012 %>% ggplot(aes(x=end.date, y=obama.2way))  + geom_point() + geom_hline(yintercept = .5, lty=2, col="indianred") + theme_minimal() + scale_y_continuous(labels = scales::percent) + ggtitle("National Level Polls in 2012") +
+  xlab("Date") + ylab("Obama % of two-party vote share")
+```
+
+# Polling aggregation
+
+- Polls are noisy measures of an underlying **truth**
+  - Polling **aggregators** got a lot of traction (esp. in 2012) in summarizing these results
+  - Developments in this industry focus on accounting for both **stochastic** error and **systematic** error
+
+- One approach is to model the data as a **dynamic model**
+  - We observe $N$ polls at $T$ total days ($t = T$ is election day)
+  - A poll at time $t$ is a function of the **true** state of public opinion
+  - Public opinion evolves from $t-1$ to $t$ as a **random walk**
+  
+- Since polls vary in sample size, we'll use a **binomial** outcome model
+
+  $$Y_i \sim \text{Binomial}(\theta_{i}, n_i)$$
+  
+- $Y_i$: The number of respondents supporting the **Democratic** candidate among respondents supporting one of the two major parties
+- $n_i$: The number of poll respondents who support one of the two major parties (**observed constant**)
+- $\theta_{i}$: Share supporting the Democratic candidate at in poll $i$
 
 # Dynamic Binomial Model
 
-- This is a **much simpler** version of the full state-and-national polling model used by The Economist (and now [FiftyPlusOne](https://fiftyplusone.news/))
-  - For more info, see: [Heidemanns, M., Gelman, A., & Morris, G. E. (2020). An updated dynamic Bayesian forecasting model for the US presidential election. Harvard Data Science Review, 2(4).](https://sites.stat.columbia.edu/gelman/research/published/Harvard_Data_Science_Review.pdf)
-  - Also check out the [old Github repository](https://github.com/TheEconomist/us-potus-model) for the actual model and Stan code!
+- The parameter $\theta_i$ is going to be modeled as a function of some latent **state** variable observed at time $t$: $\mu_t$.
+  - We'll let $\mu_t$ be unbounded and use a logit link
+  
+$$\theta_i = \text{logit}^{-1}(\mu_{t[i]})$$
 
+- We can add more to the logit link to model **poll-specific** characteristics (e.g. house-effects, quality adjustments, etc...)
+
+- This is a simplified version of a full state-and-national model in **Linzer, D. A. (2013). Dynamic Bayesian forecasting of presidential elections in the states. Journal of the American Statistical Association, 108(501), 124-134.**
+  - Extensions of this were used by The Economist, post-Silver 538 and now [FiftyPlusOne](https://fiftyplusone.news/))
+  - For more info, see: [Heidemanns, M., Gelman, A., & Morris, G. E. (2020). An updated dynamic Bayesian forecasting model for the US presidential election. Harvard Data Science Review, 2(4).](https://sites.stat.columbia.edu/gelman/research/published/Harvard_Data_Science_Review.pdf)
+  - Also check out the [old Github repository](https://github.com/TheEconomist/us-potus-model) for the actual model, old data and Stan code!
+
+# Dynamic Binomial Model
+
+- The **dynamic** part comes from our model on $\mu_{t}$. We assume a **random-walk prior**
+
+  $$\mu_{t} | \mu_{t-1} \sim \text{Normal}(\mu_{t-1}, \sigma^2_{\mu})$$
+- $\sigma^2_{\mu}$ is our smoothing parameter - can fix it or put a prior on it and estimate from the data
+
+- We need to anchor one of the parameters for identification 
+  - Interestingly, we don't need to always do $\mu_1$: **Linzer (2013)** anchors $\mu_{T}$ - the **election day** result.
+  - Use a "fundamentals" forecast from *historical* elections $h$
+  
+  $$\mu_{T} \sim \text{Normal}(\text{logit}(h), \sigma_{h}^2)$$
+
+- $\sigma_{h}^2$ governs how **strong** we want our final forecast to weigh the fundamentals model.
+  - Low variance means **more** emphasis on "fundamentals"
+  - High variance means **more** emphasis on polls.
+  
+# Dynamic Binomial Model
+
+- [Lewis-Beck and Tien](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2110790) "Jobs model" gave Obama $47.61$ percent of the two-party vote-share using data from March, 2012
+  - Inputs: Vote = Presidential Popularity, Economic Growth x Incumbent interaction, Jobs Creation, Incumbency Advantage
+  
+- We'll use this as our prior mean $h_i$
+  - We'll pick prior variance as $\sigma_{h}^2 = .01$, but this is a tuning parameter that we can play with or try to learn from prior elections (which the forecasters do).
+
+# Dynamic Binomial Model
+
+```{r, echo=T}
+stan_elections <- "data{
+  int Tm; // number of time periods
+  int N; // number of polls
+  array[N] int <lower = 1, upper = Tm> day; // day of poll
+  array[N] int n_democrat; // votes for democrat
+  array[N] int n_two_party; // votes for two-party candidates
+  real h_prior; // historical forecast
+  real<lower = 0> sigma_h; // historical forecast variance
+}
+parameters{
+  vector[Tm] mu; // vote share
+  real<lower = 0> sigma_mu; // smoothing parameter
+}
+model{
+  sigma_mu ~ cauchy(0, 1);
+  // latent states
+  mu[Tm] ~ normal(logit(h_prior), sigma_h);
+  for (time in 2:Tm){ 
+    mu[time] ~ normal(mu[time - 1], sigma_mu);
+  }
+  // observed polls
+  for (n in 1:N){
+    n_democrat[n] ~ binomial_logit(n_two_party[n], mu[day[n]]);
+  }
+}
+"
+```
+
+# Data prep
+
+```{r, echo=T}
+polls2012$n_democrat <- round(polls2012$number.of.observations*(polls2012$obama/100))
+polls2012$n_two_party <- round(polls2012$number.of.observations*((polls2012$obama + polls2012$romney)/100))
+polls2012$end.date.num <- as.integer(polls2012$end.date)
+polls2012$end.date.num <- polls2012$end.date.num - min(as.integer(polls2012$end.date)) + 1
+election_day_num <- as.integer(ymd("2012-11-6")) - min(as.integer(polls2012$end.date)) + 1 #election day
+
+stan_polling_data <- list(n_democrat = polls2012$n_democrat, n_two_party = polls2012$n_two_party,
+                 Tm = election_day_num,
+                 N = nrow(polls2012),
+                 day = polls2012$end.date.num,
+                 h_prior = .4761, # Lewis-Beck and Tien March, 2012 forecast
+                 sigma_h = sqrt(.01))
+```
+
+# Running the model
+
+```{r, echo=T, warning=F}
+model_elections <- stan(
+  model_code = stan_elections,  # Stan code
+  data = stan_polling_data,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 5000,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+# Election Day Forecast
+
+```{r, echo=T}
+inv.logit <- function(x) 1/(1 + exp(-x))
+theta_mat <- extract(model_elections)$mu
+theta_pm <- inv.logit(colMeans(theta_mat))
+theta_95 <- inv.logit(apply(theta_mat, 2, function(x) quantile(x, c(.025, .975))))
+forecasts <- data.frame(end.date.num = 1:election_day_num, est = theta_pm, lower95 = theta_95[1,], upper95 = theta_95[2,])
+forecasts$end.date <- as.Date(forecasts$end.date.num +  min(as.integer(polls2012$end.date)) - 1)
+kable(head(forecasts %>% arrange(-end.date.num)))
+```
+
+# Forecast plot
+
+```{r, echo=F}
+polls2012 %>% ggplot(aes(x=end.date, y=obama.2way))  + geom_point() + geom_hline(yintercept = .5, lty=2, col="indianred") + theme_minimal() + scale_y_continuous(labels = scales::percent) + ggtitle("National Level Polls in 2012") + geom_line(data=forecasts, aes(y=est), col="dodgerblue", lwd=2) + geom_ribbon(data=forecasts, aes(y=est, ymin=lower95, ymax=upper95), alpha=.2, col="dodgerblue") + ggtitle("Dynamic regression") +
+  xlab("Date") + ylab("Obama % of two-party vote share")
+```
+
+# Messing around with the prior on "fundamentals"
+
+- What happens if we put a **really** strong weight on the fundamentals forecast over the polls?
+
+```{r, echo=T}
+stan_polling_data_2 <- stan_polling_data
+stan_polling_data_2$sigma_h <- sqrt(1/30000)
+```
+  
+# Running the model
+
+```{r, echo=T, warning=F}
+model_elections <- stan(
+  model_code = stan_elections,  # Stan code
+  data = stan_polling_data_2,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 5000,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+# Election Day Forecast
+
+```{r, echo=T}
+inv.logit <- function(x) 1/(1 + exp(-x))
+theta_mat <- extract(model_elections)$mu
+theta_pm <- inv.logit(colMeans(theta_mat))
+theta_95 <- inv.logit(apply(theta_mat, 2, function(x) quantile(x, c(.025, .975))))
+forecasts <- data.frame(end.date.num = 1:election_day_num, est = theta_pm, lower95 = theta_95[1,], upper95 = theta_95[2,])
+forecasts$end.date <- as.Date(forecasts$end.date.num +  min(as.integer(polls2012$end.date)) - 1)
+kable(head(forecasts %>% arrange(-end.date.num)))
+```
+
+# Forecast plot
+
+```{r, echo=F}
+polls2012 %>% ggplot(aes(x=end.date, y=obama.2way))  + geom_point() + geom_hline(yintercept = .5, lty=2, col="indianred") + theme_minimal() + scale_y_continuous(labels = scales::percent) + ggtitle("National Level Polls in 2012") + geom_line(data=forecasts, aes(y=est), col="dodgerblue", lwd=2) + geom_ribbon(data=forecasts, aes(y=est, ymin=lower95, ymax=upper95), alpha=.2, col="dodgerblue") + ggtitle("Dynamic Regression - Fundamentals Too Strong") +
+  xlab("Date") + ylab("Obama % of two-party vote share")
+```
+
+# Messing around with the smoother
+
+- What if we played around with the smoothing variance directly and made it **smaller** - how would that change our forecast model?
+
+```{r, echo=T}
+stan_elections_smoother <- "data{
+  int Tm; // number of time periods
+  int N; // number of polls
+  array[N] int <lower = 1, upper = Tm> day; // day of poll
+  array[N] int n_democrat; // votes for democrat
+  array[N] int n_two_party; // votes for two-party candidates
+  real h_prior; // historical forecast
+  real<lower = 0> sigma_h; // historical forecast variance
+  real<lower = 0> sigma_mu; // smoothing parameter
+}
+parameters{
+  vector[Tm] mu; // vote share
+}
+model{
+  // latent states
+  mu[Tm] ~ normal(logit(h_prior), sigma_h);
+  for (time in 2:Tm){ 
+    mu[time] ~ normal(mu[time - 1], sigma_mu);
+  }
+  // observed polls
+  for (n in 1:N){
+    n_democrat[n] ~ binomial_logit(n_two_party[n], mu[day[n]]);
+  }
+}
+"
+```
+
+# Messing around with the smoother
+
+- What if we played around with the smoothing variance directly and made it **smaller** - how would that change our forecast model?
+
+```{r, echo=T}
+stan_polling_data_3 <- stan_polling_data
+stan_polling_data_3$sigma_mu <- .005
+```
+
+# Running the model
+
+```{r, echo=T, warning=F}
+model_elections <- stan(
+  model_code = stan_elections_smoother,  # Stan code
+  data = stan_polling_data_3,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 5000,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+# Election Day Forecast
+
+```{r, echo=T}
+inv.logit <- function(x) 1/(1 + exp(-x))
+theta_mat <- extract(model_elections)$mu
+theta_pm <- inv.logit(colMeans(theta_mat))
+theta_95 <- inv.logit(apply(theta_mat, 2, function(x) quantile(x, c(.025, .975))))
+forecasts <- data.frame(end.date.num = 1:election_day_num, est = theta_pm, lower95 = theta_95[1,], upper95 = theta_95[2,])
+forecasts$end.date <- as.Date(forecasts$end.date.num +  min(as.integer(polls2012$end.date)) - 1)
+kable(head(forecasts %>% arrange(-end.date.num)))
+```
+
+# Forecast plot
+
+```{r}
+polls2012 %>% ggplot(aes(x=end.date, y=obama.2way))  + geom_point() + geom_hline(yintercept = .5, lty=2, col="indianred") + theme_minimal() + scale_y_continuous(labels = scales::percent) + ggtitle("National Level Polls in 2012") + geom_line(data=forecasts, aes(y=est), col="dodgerblue", lwd=2) + geom_ribbon(data=forecasts, aes(y=est, ymin=lower95, ymax=upper95), alpha=.2, col="dodgerblue") + ggtitle("Dynamic Regression - More smoothing") +
+  xlab("Date") + ylab("Obama % of two-party vote share")
+```
+
+# Forecasting with partial data
+
+- Let's see how the model would have looked at just before the start of October?
+
+```{r, echo=T}
+polls2012_september <- polls2012 %>% filter(end.date < ymd("2012-10-1"))
+stan_polling_data_sept <- list(n_democrat = polls2012_september$n_democrat, n_two_party = polls2012_september$n_two_party,
+                 Tm = election_day_num,
+                 N = nrow(polls2012_september),
+                 day = polls2012_september$end.date.num,
+                 h_prior = .4761, # Lewis-Beck and Tien March, 2012 forecast
+                 sigma_h = sqrt(.01))
+```
+  
+# Running the model
+
+```{r, echo=T, warning=F}
+model_elections <- stan(
+  model_code = stan_elections,  # Stan code
+  data = stan_polling_data_sept,    # named list of data
+  chains = 4,             # number of Markov chains
+  warmup = 500,          # number of warmup iterations per chain
+  iter = 5000,            # total number of iterations per chain
+  cores = 4,  
+  refresh=0,          # no progress shown
+  seed = 53703        # random seed
+  )
+```
+
+# Election Day Forecast
+
+```{r, echo=T}
+inv.logit <- function(x) 1/(1 + exp(-x))
+theta_mat <- extract(model_elections)$mu
+theta_pm <- inv.logit(colMeans(theta_mat))
+theta_95 <- inv.logit(apply(theta_mat, 2, function(x) quantile(x, c(.025, .975))))
+forecasts <- data.frame(end.date.num = 1:election_day_num, est = theta_pm, lower95 = theta_95[1,], upper95 = theta_95[2,])
+forecasts$end.date <- as.Date(forecasts$end.date.num +  min(as.integer(polls2012$end.date)) - 1)
+kable(head(forecasts %>% arrange(-end.date.num)))
+```
+
+# Forecast plot
+
+```{r}
+polls2012_september %>% ggplot(aes(x=end.date, y=obama.2way))  + geom_point() + geom_hline(yintercept = .5, lty=2, col="indianred") + theme_minimal() + scale_y_continuous(labels = scales::percent) + ggtitle("National Level Polls in 2012") + geom_line(data=forecasts, aes(y=est), col="dodgerblue", lwd=2) + geom_ribbon(data=forecasts, aes(y=est, ymin=lower95, ymax=upper95), alpha=.2, col="dodgerblue") + ggtitle("Dynamic Regression - September Forecast") +
+  xlab("Date") + ylab("Obama % of two-party vote share")
+```
