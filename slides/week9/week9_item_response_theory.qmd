@@ -78,6 +78,8 @@ knitr::opts_chunk$set(echo = T)
 - **Ideal point models**
   - Item response theory applied to **legislative voting**
   - Interpreting the latent dimensions
+- **Latent factor models**
+  - Compression of high-dimensional data into lower-dimensional summaries
   
 :::
 
@@ -825,6 +827,8 @@ results_df %>% ggplot(aes(x=session, y=idealpoint_heavysmooth, colour=justices))
 
 # Summary
 
+::: {.incremental}
+
 - Like clustering models, Item Response Theory (IRT) models treat the outcome as a function of a **latent variable**
   - However, in IRT, the **latent variable** is typically continuous rather than a discrete
 
@@ -836,4 +840,235 @@ results_df %>% ggplot(aes(x=session, y=idealpoint_heavysmooth, colour=justices))
 
 - **Careful!** - Results dependent on model structure!
   - Interpretation of the model parameters is ultimately up to the researchers - no inherent "meaning" to the latent scale.
+
+:::
+
+# Bonus: Matrix factorization
+
+::: {.incremental}
+
+- The IRT models we've discussed in this class can be considered part of a broader class of **latent factor** models
+  - Take **high-dimensional data** and represent it in a **lower-dimensional** space
+
+- Tons of related applications!
+  - Network models
+  - Word embeddings
+  
+- A common way of thinking about this problem is in terms of approximating a **matrix** (or **tensor**) using a **lower-rank** matrix
+  - Low-rank matrices can be decomposed into the outer product of two matrices representing the lower-dimensional **factors**
+
+:::
+
+# Matrix factorization
+
+- Consider an $m \times n$ matrix $\mathbf{A}$
+
+  $$\mathbf{A} = \begin{bmatrix}
+a_{11} & a_{12} & \cdots & a_{1n} \\
+a_{21} & a_{22} & \cdots & a_{2n} \\
+\vdots & \vdots & \ddots & \vdots \\
+a_{m1} & a_{m2} & \cdots & a_{mn}
+\end{bmatrix}$$
+
+- We can (for example) think of the matrix of **votes** by **legislators**
+  - Or observations of **ties** on a network!
+  - Or interactions between states
+
+# Matrix factorization
+
+```{r}
+rollcall <- read_csv("data/H118_votes.csv")
+rollcall <- rollcall %>% mutate(vote = case_when(cast_code == 1 ~ 1,
+                                                 cast_code == 6 ~ -1,
+                                                 cast_code == 7 ~ 0,
+                                                 cast_code == 9 ~ 0))
+members <- read_csv("data/H118_members.csv")
+rollcall <- rollcall %>% left_join(members, by="icpsr")
+rollcall_matrix <- as.matrix(rollcall %>% select(rollnumber, bioname, vote) %>% pivot_wider(names_from = bioname, values_from = vote) %>% select(-rollnumber))
+rollcall_matrix[is.na(rollcall_matrix)] <- 0
+```
+
+- We'll look at the voting records of the 118th U.S. Congress
+
+```{r}
+rollcall_matrix[1:6, 1:6]
+```
+
+- What's the dimensionality?
+
+```{r}
+dim(rollcall_matrix)
+```
+
+# Singular Value Decomposition (SVD)
+
+::: {.incremental}
+
+- Every real matrix has the property that it can be **decomposed** into the product of two matrices of **orthogonal vectors** and a matrix of **singular values**
+
+  $$\mathbf{A} = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^{\prime}$$
+  
+- $\mathbf{U}$ is an $m \times m$ matrix of orthogonal column vectors 
+- $\mathbf{V}$ is an $n \times n$ matrix of orthogonal column vectors
+- $\mathbf{\Sigma}$ is an $m \times n$ **diagonal** matrix of singular values ordered by size.
+
+- An alternative way of writing this would be to think of **summing** over the rank-1 matrices created by the outer product of the row and column vectors of $\mathbf{U}$ and $\mathbf{V}$, scaled by the singular value $\sigma$
+
+  $$\mathbf{A} = \sum_{i=1}^{\text{min}(m, n)} \sigma_i \mathbf{u}_i\mathbf{v}_i^{\prime}$$
+
+:::
+
+# Singular Value Decomposition
+
+```{tikz, svd, echo=F, fig.align='center'}
+\begin{tikzpicture}
+
+%==============================
+% Matrix A
+%==============================
+\draw[thick] (0,0) rectangle (1.2,2);
+\node at (0.6,-0.3) {\textbf{A}};
+\node at (-0.25,1) {$m$};
+\node at (0.6,2.25) {$n$};
+
+%==============================
+% Equals sign
+%==============================
+\node at (1.8,1) {\Large$=$};
+
+%==============================
+% Matrix U (square, same height as A) + 3 vertical lines
+%==============================
+\draw[thick] (2.4,0) rectangle (4.4,2);  % width = height = 2
+\node at (3.4,-0.3) {\textbf{U}};
+\node at (2.15,1) {$m$};
+\node at (3.4,2.25) {$m$};
+
+% Draw 3 vertical lines inside U
+\foreach \x in {2.4+0.5,2.4+1.0,2.4+1.5} {
+    \draw[thin] (\x,0.3) -- (\x,1.7);
+}
+
+%==============================
+% Matrix S (Sigma)
+%==============================
+\draw[thick] (4.8,0) rectangle (6.0,2);
+\node at (5.4,-0.3) {\textbf{S}};
+\node at (4.6,1) {$m$};
+\node at (5.4,2.25) {$n$};
+% Draw diagonal elements
+\foreach \i in {0,...,4}{
+    \fill (5+0.2*\i,1.8-0.2*\i) circle (1.2pt);
+}
+
+%==============================
+% Matrix V^T (square) + 3 horizontal lines
+%==============================
+\draw[thick] (6.6,0.4) rectangle (7.6,1.4);
+\node at (7.1,0.1) {$\mathbf{V}^{\prime}$};
+\node at (7.1,1.55) {$n$};
+\node at (7.75,0.9) {$n$};
+
+% Draw 3 horizontal lines inside V^T
+\foreach \y in {0.4+0.25,0.4+0.5,0.4+0.75} {
+    \draw[thin] (6.9,\y) -- (7.3,\y);
+}
+
+\end{tikzpicture}
+```
+
+
+# Low Rank Approximation
+
+- We can use the SVD to obtain a **low rank** approximation of $A$.
+  - Given a choice of rank $k << m,n$, our **best approximation** of $A$ is to just take the first $k$ largest singular values and the corresponding elements of $U$ and $V$
+  
+```{tikz, lorank, echo=F, fig.align='center'}
+\usetikzlibrary{positioning, calc}
+\begin{tikzpicture}[
+    scale=1,
+    matrix/.style={
+        rectangle,
+        draw=black,
+        thick,
+        minimum width=#1,
+        minimum height=3cm,
+        fill=blue!10
+    },
+    matrix/.default={2cm}
+]
+% Matrix A (m x n)
+\node[matrix=3.5cm, label=below:$n$, label=left:$m$] (A) at (0,0) {};
+\node[above=0.1cm of A] {$\mathbf{A}$};
+\node at (A.center) {$m \times n$};
+
+% Equals sign
+\node (eq) at ($(A.east) + (1.2,0)$) {\Large $\approx$};
+
+% Matrix U (m x k) - skinny
+\node[matrix=1.2cm, label=below:$k$, label=left:$m$] (U) at ($(eq.east) + (1.8,0)$) {};
+\node[above=0.1cm of U] {$\mathbf{U}$};
+\node at (U.center) {$m \times k$};
+
+% Multiplication sign 1
+\node (mult1) at ($(U.east) + (0.7,0)$) {\Large $\times$};
+
+% Matrix Sigma (k x k) - square
+\node[matrix=1.2cm, minimum height=1.2cm, label=below:$k$, label=left:$k$, fill=red!15] (Sigma) at ($(mult1.east) + (1.2,0)$) {};
+\node[above=0.1cm of Sigma] {$\mathbf{\Sigma}$};
+\node at (Sigma.center) {$k \times k$};
+
+% Multiplication sign 2
+\node (mult2) at ($(Sigma.east) + (0.7,0)$) {\Large $\times$};
+
+% Matrix V^T (k x n) - wide
+\node[matrix=3.5cm, minimum height=1.2cm, label=below:$n$, label=left:$k$] (VT) at ($(mult2.east) + (2.3,0)$) {};
+\node[above=0.1cm of VT] {$\mathbf{V}^\top$};
+\node at (VT.center) {$k \times n$};
+
+\end{tikzpicture}
+```
+
+# Low Rank Approximation
+
+- Let's illustrate this with our voting matrix (and provide some intuition for what the low-rank matrices represent)
+  - Start with the SVD of our voting matrix
+  
+```{r, echo=T}
+rollcall_svd <- svd(rollcall_matrix)
+```
+
+# Low Rank Approximation
+
+- Our first column of $u$ has as many elements as **votes**
+- Our first column of $v$ has as many elements as **legislators**
+
+```{r, echo=T}
+u_1 <- rollcall_svd$u[,1]
+v_1 <- rollcall_svd$v[,1]
+names(v_1) <- colnames(rollcall_matrix)
+```
+
+# Low Rank Approximation
+
+- Let's plot a histogram of that first element of $v$ - what does this look like?
+
+```{r}
+hist(v_1, main = "First latent legislator factor")
+```
+
+# Low Rank Approximation
+
+- Which legislators are "low" on the factor?
+
+```{r}
+head(v_1[order(v_1)], 20)
+```
+
+
+- Which legislators are "high" on the factor?
+  
+```{r}
+head(v_1[order(-v_1)], 20)
+```
 
