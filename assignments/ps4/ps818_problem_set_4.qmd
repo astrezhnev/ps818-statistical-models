@@ -1,0 +1,87 @@
+---
+title: 'PS 818: Problem Set 4'
+author: "YOUR NAME"
+date: "November 16, 2025"
+output:
+  html_document:
+    df_print: paged
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Useful packages
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(sandwich)
+library(caret)
+library(ranger)
+library(glmnet)
+```
+
+
+>Please upload your solutions as a .html file saved as "Yourlastname_Yourfirstinitial_pset4.html"). In addition, an electronic copy of your .qmd file (saved as "Yourlastname_Yourfirstinitial_pset4.qmd") must be submitted to the course website at the same time. We should be able to run your code without error messages. In order to receive credit, homework submissions must be substantially started and all work must be shown.
+
+# Problem 1
+
+In this problem we will be examining how to estimate causal effects in observational studies using **double machine learning** - implementing flexible models for the relationship between the confounders and treatment and the confounders and outcome.
+
+Below, we will read in the data from Hazlett (2020) which studies the effect of exposure to violence on attitudes towards peace among refugees from Darfur.
+
+> Hazlett, C. (2020). Angry or weary? How violence impacts attitudes toward peace among Darfurian refugees. Journal of Conflict Resolution, 64(5), 844-870.
+
+```{r}
+darfur <- read_csv("data/darfur.csv")
+```
+
+The dataset is a survey conducted in 2009 of Darfurian refugees living in refugee camps in eastern Chad. The main outcome of interest is `peacefactor` which is a 0-1 scale that combines responses to four questions related to beliefs in whether it is possible to make peace with enemies. Higher values denote more "pro-peace" attitudes. The main treatment of interest is `directlyharmed` which indicates whether a respondent was directly exposed to violence related to the conflict.
+
+There are a number of confounders that the paper adjusts for:
+
+- `age` - The age of the respondent
+- `farmer_dar` - Whether the respondent is a farmer
+- `herder_dar` - Whether the respondent is a herder
+- `pastvoted` - Did the respondent vote in previous elections
+- `hhsize_darfur` - What is the size of the respondent's household?
+- `female` - An indicator for whether the respondent is female.
+
+We will be working in the **partial linear model** setting. Specifically, we assume that the outcome model can be written as
+
+$$Y_i = \tau D_i + g_0(X_i) + \epsilon_i$$
+
+where $E[\epsilon_i | D_i, X_i] = 0$ and $g_0()$ is some unknown function that takes as input the confounding covariates.
+
+Likewise, we assume that
+
+$$D_i = m_o(X_i) + \eta_i$$
+
+where $E[\eta_i | X_i] = 0$ and $m_0$ is some unknown function of the confounding covariates.
+
+## Part A
+
+First, let's just consider all of the covariates without any interactions or basis expansions and a simple additive linear model for the control observations. In other words, assume $g_0(X_i) = X_i^\prime\beta$ (and include the "intercept" as one of the covariates). Estimate the average treatment effect of direct harm on pro-peace attitudes using a simple ordinary least squares regression with robust standard errors (use the HC1 correction). Report the point estimate and 95% confidence interval and interpret your results.
+
+## Part B
+
+Now consider a much larger covariate space and a more flexible outcome model. Specifically, consider a covariate space that includes a cubic polynomial basis expansion for both age and household size as well as all two-way and three-way interactions between the variables.
+
+Hint: You can use the `(formula)^3` syntax in an R formula to automatically create the two-way and three-way interactions between each component. The `poly()` function will generate a polynomial basis expansion in an R formula as well.
+
+Estimate a lasso regression of the outcome on the covariate set and a lasso regression of the treatment on the covariates set (in both regressions, don't penalize the intercept and standardize the inputs). Use cross-validation to select $\lambda$. Set the random seed to 53703. Keep the terms that receive **non-zero** coefficients in **either** of the two regressions.
+
+Run a new regression of the outcome on the treatment and all of the selected terms. Provide an estimate of the treatment effect and a 95% asymptotic normal confidence interval. Compare your results to Part A
+
+## Part C
+
+Now we'll implement a **double machine learning** estimator using a random forests approach to estimating the two nuisance functions. Using the covariates from Part A, use separate random forests to estimate $\hat{g_0}()$ and $\hat{m_0}()$. Use 5-fold cross-fitting to generate an estimate of $\hat{g_0}(X_i)$ and $\hat{m_0}(X_i)$ for each observation.
+
+Then, regress the residualized outcome $Y_i - \hat{g_0}(X_i)$ on the residualized treatment $D_i - \hat{m_0}(X_i)$ to estimate the treatment effect. Again, provide a point estimate and 95% asymptotically normal confidence intervals (use an HC1 heteroskedasticity-robust variance estimator). Compare your results to Parts A and B. What do you conclude about the robustness of the estimated treatment effect?
+
+
+
+
