@@ -1,0 +1,474 @@
+---
+title: "Week 12: Flexible Regression - Part 3"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "November 17, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: true
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+---
+
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(splines)
+library(lubridate)
+
+options(digits=3)
+knitr::opts_chunk$set(echo = T)
+set.seed(60639)
+
+library(caret)
+library(rpart)
+
+```
+
+
+# Previously
+
+$$
+  \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+::: {.incremental}
+
+- **Kernels**
+  - "Kernel smoothing" - Kernels as a "localization" tool
+  - "Kernel methods" - Kernels as regression inputs
+  - Two *different* uses of the term/concept - but some interesting relations
+- **Forests**
+  - Tree-based models for classification and regression
+  - Ensembles/averages of trees via **random forests**
+
+:::
+
+# This week
+
+::: {.incremental}
+
+- **More forests**
+  - Other methods of aggregating trees - **Bayesian Additive Regression Trees**
+  - Trees for detecting causal heterogeneity
+  - "Honest" inference via sample-splitting
+
+- **More kernels**
+  - Model-based interpretation via **gaussian processes**
+
+:::
+
+# Classification and Regression Trees (CART)
+
+::: {.incremental}
+
+- The **CART** algorithm constructs a **prediction** for an outcome $Y$ given some inputs $X$ by **partitioning** the space of $X$ into a series of $M$ **hyper-rectangles**
+  - Introduced by **Breiman et. al. (1984)**
+  - Very good political science summary in **Montgomery and Olivella (2018)**
+  
+- We'll define a **tree**-based prediction as:
+
+$$f(X) = T(X, \theta) = \sum_{m=1}^M c_m \mathbf{I}(X \in R_m)$$
+
+- Here $\theta$ denotes the tree-specific "hyperparameters" (e.g. tree-depth, node size, etc...)
+
+:::
+
+# Classification and Regression Trees (CART)
+
+::: {.incremental}
+
+- Searching over the space of all possible splits and all possible covariates to minimize some error function is **computationally prohibitive**
+- Basic **recursive binary partitioning** algorithm:
+  - (1): For each variable, find a splitting point that minimizes the **within-partition** variance
+  - (2): Split on the single variable that provides the **best split** among these variables
+  - (3): Repeat 1/2 on each **sub-sample** created by the previous split.
+  - (4): Stop if some stopping rule reached (e.g. minimum node size).
+
+- **Prune** the tree to remove splits that have a minimal impact on fit
+
+:::
+
+
+# Example: Transgender attitudes (Broockman and Kalla, 2016)
+
+- **Broockman and Kalla (2016)** study the effect of in-person canvassing on attitudes towards transgender individuals.
+  - We'll get to the experiment later, but first we'll model attitudes at baseline using available covariates.
+
+- The study started by recruiting about 68,000 respondents for a baseline intake survey
+
+```{r}
+canvas <- read_dta("data/broockman_kalla_replication_data.dta")
+```
+
+- It then randomly selected 1,825 to be assigned to receive either of the two canvassing conditions.
+
+```{r}
+canvas_exp <- canvas %>% filter(!is.na(treat_ind))
+canvas_exp <- canvas %>% filter(!is.na(vf_age)&!is.na(vf_republican)&!is.na(vf_democrat)&!is.na(vf_female)&!is.na(vf_hispanic)&
+                        !is.na(religious_t0)&!is.na(ssm_t0)&!is.na(ideology_t0))
+```
+
+# Example: Transgender attitudes 
+
+- The main outcome of interest is `therm_trans_t0`, a 0-100 attitude thermometer measured at baseline.
+
+```{r, echo=F, fig.align='center', fig.dpi=100}
+canvas_exp %>% ggplot(aes(x=therm_trans_t0)) + geom_histogram(bins=35) + theme_bw() + labs(x="Transgender Feeling Thermometer (0-100)", y="Count")
+```
+
+# Example: Transgender attitudes
+
+- We have some covariates observed in the voter file as well as a number of questions asked on the survey
+
+```{r}
+predict_tree <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0,
+                  data = canvas_exp)
+```
+
+# Example: Transgender attitudes
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+rattle::fancyRpartPlot(predict_tree, sub="")
+```
+
+# Example: Transgender attitudes
+
+- What happens if we lower the "complexity parameter" required to even consider a split
+
+```{r}
+predict_tree_moresplits <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0,
+                  data = canvas_exp, control = rpart.control(cp=0.005))
+```
+
+```{r}
+plotcp(predict_tree_moresplits)
+```
+
+# Example: Transgender attitudes
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+rattle::fancyRpartPlot(predict_tree_moresplits, sub="")
+```
+
+
+# Example: Transgender attitudes
+
+- Turns out attitudes on same-sex marriage are **extremely** predictive. What if we took out that input?
+
+```{r}
+predict_tree2 <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ideology_t0,
+                  data = canvas_exp)
+```
+
+# Example: Transgender attitudes
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+rattle::fancyRpartPlot(predict_tree2, sub="")
+```
+
+# Example: Transgender Attitudes
+
+- Lastly, what about just the voter file covariates
+
+```{r}
+predict_tree3 <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic,
+                  data = canvas_exp)
+```
+
+# Example: Transgender attitudes
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+rattle::fancyRpartPlot(predict_tree3, sub="")
+```
+
+# Combining trees
+
+::: {.incremental}
+
+- The problem with a **single tree** is that it's still highly likely to overfit the data even with pruning and cross-validation.
+
+- **Solution**: Grow many trees and combine them
+
+  $$f(X) = \sum_{k=1}^K T_k(X, \theta_k)$$
+
+- But lots of different approaches to **combination**:
+  - **Random forests**
+  - **Gradient Boosting**
+  - **Bayesian Additive Regression Trees**
+  
+:::
+
+# Random forests
+
+::: {.incremental}
+
+- The **easiest** way to aggregate is to simply average over a bunch of trees grown in different ways
+  - Best aggregation comes from having **independent** trees
+  
+- **Breiman (2001)** Random Forest algorithm **de-correlates** trees through two techniques
+  - **Bootstrap aggregatting** (Bagging) - Growing trees on bootstrap re-samples of the data
+  - **Random subspaces**/"Feature bagging" - Growing trees on randomly sampled subsets of the features
+  
+- Aggregate using simple averages of predictions from each tree
+
+:::
+
+# Gradient boosting
+
+::: {.incremental}
+
+- Alternatively, we can think of **iteratively** growing trees that predict the residuals from the combination of all **previous** models
+  - "Boosting" transforms a sequence of "weak" learners (single trees) into a collectively stronger predictor
+  
+- **Example**: In our previous illustration, we found that attitudes towards **same sex marriage** were the strongest predictor in the first tree
+  - What happens if we fit a tree to the **residuals** from the first tree?
+  
+```{r}
+canvas_exp$therm_trans_t0_resid1 <- canvas_exp$therm_trans_t0 - predict(predict_tree_moresplits)
+predict_tree_residual <- rpart(therm_trans_t0_resid1 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0, control = rpart.control(cp=0.005),
+                  data = canvas_exp)
+```
+  
+:::
+
+# Gradient boosting
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+rattle::fancyRpartPlot(predict_tree_residual, sub="")
+```
+
+# Gradient boosting
+
+- Each tree is grown to explain the **residual** left behind by the combination of **all previous** trees.
+  - New trees are "shrunk" by some factor between $0$ and $1$
+
+```{r}
+library(gbm3) #install_github("gbm-developers/gbm3")
+boosted_trees <- gbmt(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0,  data = canvas_exp)
+```
+
+# Variable importance
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+summary(boosted_trees)
+```
+
+# Partial dependence plot
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+plot(boosted_trees, var_index = c(1,7))
+```
+
+# Bayesian Additive Regression Trees (BART)
+
+- **BART** is also a "sum-of-trees" model
+  - Aggregate many individual trees into a "strong" predictor of $Y$
+  
+- But regularizes trees using a fully Bayesian outcome model
+
+$$Y_i = \sum_{k=1}^K T_k(X_i, \theta_k) + \epsilon_i$$
+$$\epsilon_{i} \sim \text{Normal}(0, \sigma^2)$$
+
+- Place a Bayesian prior over both the tree hyperparameters $\theta_k$ (e.g. tree depth), predictions at each node ($\mu$) and outcome variance $\sigma^2$
+  - Estimation via MCMC
+
+# Causal Trees
+
+::: {.incremental}
+
+- A common task in social science is not **prediction** but rather **description** of **heterogeneity**
+  - Researchers run **randomized experiments** to identify **average** treatment effects.
+  
+- But we often want to know how the treatment effect **varies** by individuals - we want **conditional average treatment effects**
+  - For which units is the effect **positive**?
+  - For which units is the effect **negative**?
+  
+- Because of the **fundamental problem of causal inference**, we can't observe individual effects directly
+  - Sometimes we have a clear idea of which groups we'd like to test heterogeneity for **ex-ante**
+  - But **ex-post** we're worried about the **garden of forking paths**.
+  
+- Can we find **heterogenous treatment effects** without knowing the sub-groups in advance and without p-hacking?
+
+:::
+
+# Causal Trees
+
+::: {.incremental}
+
+- **Athey and Imbens (2016)** propose using trees to model heterogeneity.
+  - Find a **partition** of the sample into subsets with **distinctive** treatment effects
+  
+- Modifies the off-the-shelf CART in two key ways:
+  1. Optimizes splits for **treatment effects** (where we can't observe the 'ground truth')
+  2. "Honest" inference via sample splitting
+  
+- **Key intuitions**
+  1. Splits for effect heterogeneity + precisely estimated treatment effects at each leaf
+  2. Avoids over-fitting by estimating effects on a different sample than the one used to create the splits
+  
+:::
+
+# Honest inference
+
+::: {.incremental}
+
+- We might be concerned about **over-splitting** our sample to random noise in the treatment effects.
+  - The sample split criterion alone is always guaranteed to find the split that **maximizes** the difference in effects across nodes.
+  
+- **Solution** - Evaluate the treatment effects using a **separate sample**
+  - "Honest" inference splits the sample randomly in two
+  - The first sample is used to generate the splits for a tree
+  - The second sample is used to **estimate the effects** at each node.
+
+- Guarantees we still have unbiased inference on the treatment effects **given** a partition fit to optimize effect heterogeneity. 
+
+:::
+
+# Example: Effect of Canvassing
+
+- Let's go back to **Broockman and Kalla (2016)** 
+  - What's the effect of the canvassing treatment at the first time period?
+  
+```{r}
+canvas_exp_t1 <- canvas_exp %>% filter(!is.na(therm_trans_t1))
+canvas_exp_t1 <- canvas_exp_t1 %>% mutate(therm_trans_chg = therm_trans_t1 - therm_trans_t0)
+ate <- lm_robust(therm_trans_chg ~ treat_ind, data=canvas_exp_t1)
+summary(ate)
+```
+
+- Does this vary based on our pre-treatment covariates?
+
+# Example: Effect of Canvassing
+
+- If we just want a **single tree**, we can use `htetree`
+  - Need to **split** our sample into training and evaluation
+  
+```{r}
+library(htetree)
+set.seed(53)
+indices <- sample(1:nrow(canvas_exp_t1), nrow(canvas_exp_t1)/2)
+train_canvas_t1 <- canvas_exp_t1[indices,]
+eval_canvas_t1 <- canvas_exp_t1[-indices,]
+
+trans_tree <- honest.causalTree(therm_trans_chg ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0, data = train_canvas_t1,
+     treatment = train_canvas_t1$treat_ind,
+     est_data = eval_canvas_t1,
+     est_treatment = eval_canvas_t1$treat_ind,
+     split.Rule = "CT",
+     cv.option = "CT", split.Honest = T, cv.Honest = T, split.Bucket = F, 
+                   xval = 10, cp = 0, minsize = 20, propensity = 0.5)
+```
+
+# Example: Effect of Canvassing
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+rattle::fancyRpartPlot(trans_tree, sub="")
+```
+
+# Causal forests
+
+::: {.incremental}
+
+- A **single** tree might still overfit and fail to accurately capture the true effect heterogeneity.
+  - Unstable splits!
+  - The presence of **sharp** decision boundaries means we're unlikely to have a good estimator for the CATE $\hat{\tau}(X_i)$
+
+- **Solution**: Do forests (**Athey and Wager (2018)**)
+  - Plug in the Causal Tree algorithm into the standard random forest methodology (bagging + random subspaces)
+  
+- **Downsides**:
+  - No longer have an **interpretable** set of sub-groups.
+  - However, see **Huang, Tang and Kenney (2025)** for a new method for recovering these from a tree fit to the random forest predicted $\hat{\tau}(X_i)$
+
+:::
+
+# Example: Effect of Canvassing
+
+- `grf` ("generalized random forests") implements this approach
+
+```{r}
+library(grf)
+set.seed(53703)
+trans_forest <- causal_forest(X =model.matrix( ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0,  data = canvas_exp_t1), 
+                        Y = as.numeric(canvas_exp_t1$therm_trans_chg), 
+                        W = as.numeric(canvas_exp_t1$treat_ind))
+print(trans_forest)
+```
+
+# Example: Effect of Canvassing
+
+- Let's see what the distribution of treatment effects is in-sample
+
+```{r}
+hist(predict(trans_forest)$predictions, xlab="Predicted CATE", ylab="Count", main = "Causal Forest CATEs")
+```
+
+# Example: Effect of Canvassing
+
+- We can test out the **causal distillation** method to essentially fit a conventional CART tree to the predicted effects from the causal forest!
+
+```{r}
+library(causalDT)
+set.seed(53703)
+trans_distill <- causalDT(
+X =model.matrix( ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+                        religious_t0 + ssm_t0 + ideology_t0,  data = canvas_exp_t1), 
+                        Y = as.numeric(canvas_exp_t1$therm_trans_chg), 
+                        Z = as.numeric(canvas_exp_t1$treat_ind),
+holdout_prop = 0.5,
+teacher_model = "causal_forest",
+student_model = "rpart",
+rpart_control = list(cp = 0, minbucket = 20),
+rpart_prune = "min"
+)
+```
+
+# Distilled Effect Heterogeneity
+
+```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
+plot_cdt(trans_distill)
+```
+  
