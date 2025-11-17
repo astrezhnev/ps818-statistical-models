@@ -1729,9 +1729,10 @@ No. Continuous Explanatory Vars.: 1</code></pre>
 <ul>
 <li>How do we figure out the partitions for a given tree?
 <ul>
-<li>(1): Pick some variable <span class="math inline">\(j\)</span> out of the set of available predictors</li>
-<li>(2): Find a splitting point that minimizes the <strong>within-partition</strong> variance</li>
-<li>(3): Repeat for another variable <span class="math inline">\(j^\prime\)</span> in each of the resulting regions</li>
+<li>(1): For each variable, find a splitting point that minimizes the <strong>within-partition</strong> variance</li>
+<li>(2): Split on the single variable that provides the <strong>best split</strong> among these variables</li>
+<li>(3): Repeat 1/2 on each <strong>sub-sample</strong> created by the previous split.</li>
+<li>(4): Continue until stopping conditions reached</li>
 </ul></li>
 <li>How large should we grow the tree?
 <ul>
