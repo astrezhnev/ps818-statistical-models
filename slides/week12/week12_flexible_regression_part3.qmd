@@ -23,7 +23,7 @@ format:
       method: mathjax
       url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 execute: 
-  cache: true
+  cache: false
 code:
   execute: 
     - r
@@ -157,7 +157,7 @@ canvas_exp %>% ggplot(aes(x=therm_trans_t0)) + geom_histogram(bins=35) + theme_b
 - We have some covariates observed in the voter file as well as a number of questions asked on the survey
 
 ```{r}
-predict_tree <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+predict_tree <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic + vf_black +
                         religious_t0 + ssm_t0 + ideology_t0,
                   data = canvas_exp)
 ```
@@ -173,7 +173,7 @@ rattle::fancyRpartPlot(predict_tree, sub="")
 - What happens if we lower the "complexity parameter" required to even consider a split
 
 ```{r}
-predict_tree_moresplits <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic +
+predict_tree_moresplits <- rpart(therm_trans_t0 ~ vf_age + vf_republican + vf_democrat + vf_female + vf_hispanic + vf_black +
                         religious_t0 + ssm_t0 + ideology_t0,
                   data = canvas_exp, control = rpart.control(cp=0.005))
 ```
@@ -386,7 +386,7 @@ summary(ate)
   
 ```{r}
 library(htetree)
-set.seed(53)
+set.seed(537)
 indices <- sample(1:nrow(canvas_exp_t1), nrow(canvas_exp_t1)/2)
 train_canvas_t1 <- canvas_exp_t1[indices,]
 eval_canvas_t1 <- canvas_exp_t1[-indices,]
@@ -471,4 +471,210 @@ rpart_prune = "min"
 ```{r, message = F, warning=F, fig.width=11, fig.height=6, fig.align="center", echo=F, dpi=150}
 plot_cdt(trans_distill)
 ```
+
+# Double Machine Learning
+
+::: {.incremental}
+
+- In settings where we are doing **observational causal inference**, the covariates are of-interest because they are typically **confounding** factors.
+  - **Conditional ignorability** - Given $X$, the treatment $D$ is assigned **as-if-random**. 
+
+- Often researchers will adjust for $X_i$ in a conventional OLS regression model
+
+  $$Y_i = \tau D_i + \beta_0 + \beta_1X_{i1} + \beta_2X_{i2} + \dotsc + \epsilon_i$$
   
+- But can we do this without making strong assumptions on the relationship between confounders and outcome?
+
+  $$Y_i = \tau D_i + g(X_i) + \epsilon_i$$
+  
+- What happens if we estimate $\hat{g}(X_i)$ using a flexible machine learning method (like a random forest)?
+  - Turns out our estimator of $\hat{\tau}$ will be asymptotically biased!
+  - How do we solve this? **Orthogonalize the treatment**
+  
+:::
+
+# Double Machine Learning
+
+::: {.incremental}
+
+- We'll focus on the **partial linear model** setting
+
+  $$Y_i = \tau D_i + g(X_i) + \epsilon_i$$
+  
+  $$D_i = h(X_i) + \eta_i$$
+- $g()$ and $h()$ are both nuisance functions which we want to estimate via machine-learning methods.
+
+- **Chernozukov et. al. (2018)** show that under properly constructed machine-learning estimators of $g()$ and $h()$, we can obtain an estimator of $\tau$ that is asymptotically unbiased and normal.
+
+- **Double-machine learning** recipe:
+  1. Estimate $\hat{g}(X_i)$ and generate an **outcome** prediction for each observation (using cross-fitting)
+  2. Estimate $\hat{h}(X_i)$ and do the same for predicted **treatment**
+  3. Create residuals $\tilde{Y_i} = Y_i - \hat{g}(X_i)$ and $\tilde{D_i} = D_i - \hat{h}(X_i)$
+  4. Regress $\tilde{Y_i}$ on $\tilde{D_i}$. Estimate SEs + confidence intervals using the typical normal approximation
+  
+:::
+
+# Gaussian Processes
+
+# Gaussian Processes
+
+::: {.incremental}
+
+- As before, we want to **estimate** a conditional expectation without making strong assumptions about the shape of the functional form
+
+  $$E[Y|X] = f(X)$$
+  
+- When we covered Bayesian GLMs, we made assumptions specifically about the shape of $f()$
+
+  $$f(X) = g(X\beta)$$
+- We searched over the space of functions defined by a **linear combination** of the inputs $X$ and the parameters $\beta$
+  - Even if the sample size **grew**, we would still be estimating a **fixed** number of parameters.
+  - This is what we mean when we call something a **parametric** model
+  
+- But can we be more flexible than that...
+
+:::
+
+# Example: Poll averaging
+
+- For computational reasons, we'll focus on a **very simple** example with a small number of observations
+  - 2012 Election Polls in October/November
+  
+```{r, message=F}
+library(lubridate)
+polls2012 <- read_csv("data/all_polls_2012.csv")  %>% filter(state == "--")
+polls2012$end.date <- mdy(polls2012$end.date)
+polls2012$obama.2way <- polls2012$obama/(polls2012$obama + polls2012$romney)
+polls2012 <- polls2012 %>% filter(end.date >= ymd("2012-10-01"))
+polls2012$day <- day(polls2012$end.date)
+```
+
+# Example: Poll averaging
+
+```{r}
+polls2012 %>% ggplot(aes(x=day, y=obama.2way)) + geom_point() + theme_minimal() + labs(x="Day", y="Obama 2-way Vote Share")
+```
+
+# Gaussian Processes
+
+::: {.incremental}
+
+- We want to search over a space of **functions** $f(x)$ that is more flexible than the restricted parametric form.
+  - But we need to constrain that search in some way.
+  - In **Bayesian** models, we implement those constraints in the form of a **prior**.
+  - Previously, we've specified prior distributions over parameters (e.g. $\beta \sim \text{Normal}(0, \sigma_{\beta}^2)$)
+
+- What does it mean to define a distribution $f(x) \sim \ ?$
+  - You can think about $f(x)$ as an **infinite dimensional** parameter.
+  
+:::
+  
+# Gaussian Processes
+
+::: {.incremental}
+
+- A **Gaussian Process** is a distribution over **functions** characterized by a **mean function** and a **covariance function**
+
+  $$f() \sim \text{GP}(\mu, K(\cdot, \cdot))$$
+- The covariance function is a **kernel** - typically the **radial basis kernel** with two hyperparameters $\sigma^2$ and $l^2$
+
+  $$K(x, x^\prime) = Cov(f(x), f(x^\prime)) = \sigma^2\exp\bigg(-\frac{||x - x^\prime||^2}{2l^2}\bigg)$$
+
+- If $f()$ is a **Gaussian Process**, then for any **finite number of inputs** $\mathbf{x} = x_{1}, x_{2}, x{3}, \dotsc x_{n}$, the distribution of $f()$ is **multivariate normal**
+
+  $$\{f(x_1), f(x_2), f(x_3), \dotsc f(x_n)\} \sim \text{Normal}(\mu, \Sigma)$$
+  where the elements of $\Sigma_{ij} = K(x_i, x_j)$
+  
+:::
+  
+# Gaussian processes
+
+- Let's visualize what a **sample** from a Gaussian process looks like?
+  - What sorts of **functions** can it represent?
+
+```{r,echo=T}
+rbf_kernel_1d <- function(x, xprime, sigma=1, l=100){
+  return((sigma^2)*exp(-(x-xprime)^2)/(2*l^2))
+}
+```
+
+# Gaussian processes
+
+```{r,echo=T}
+set.seed(53703)
+mean_val <- mean(polls2012$obama.2way)
+sample_dat <- data.frame(day = seq(0,31, .1))
+expanded_inputs <- expand.grid(sample_dat$day, sample_dat$day)
+sample_varcov <- matrix(nrow=nrow(sample_dat), ncol=nrow(sample_dat), data=rbf_kernel_1d(expanded_inputs[,1], expanded_inputs[,2]))
+sample_dat$obama.2way <- MASS::mvrnorm(n=1, mu=rep(mean_val, nrow(sample_varcov)), Sigma = sample_varcov)
+polls2012 %>% ggplot(aes(x=day, y=obama.2way)) + geom_point() + geom_line(data=sample_dat, lwd=2, col="grey") + theme_minimal() + labs(x="Day", y="Obama 2-way Vote Share", title = "Sample from a GP prior")
+```
+
+# Gaussian processes
+
+```{r,echo=T}
+set.seed(537)
+mean_val <- mean(polls2012$obama.2way)
+sample_dat <- data.frame(day = seq(0,31, .1))
+expanded_inputs <- expand.grid(sample_dat$day, sample_dat$day)
+sample_varcov <- matrix(nrow=nrow(sample_dat), ncol=nrow(sample_dat), data=rbf_kernel_1d(expanded_inputs[,1], expanded_inputs[,2]))
+sample_dat$obama.2way <- MASS::mvrnorm(n=1, mu=rep(mean_val, nrow(sample_varcov)), Sigma = sample_varcov)
+polls2012 %>% ggplot(aes(x=day, y=obama.2way)) + geom_point() + geom_line(data=sample_dat, lwd=2, col="grey") + theme_minimal() + labs(x="Day", y="Obama 2-way Vote Share", title = "Another sample from a GP prior")
+```
+
+# Gaussian processes
+
+::: {.incremental}
+
+- So the underlying functions have a particular kind of **smoothness**
+  - "Close" observations have similar values of $f()$
+  - Prior "wiggliness" controlled by the hyperparameters in the kernel function
+  - We can put further priors on those or cross-validate them.
+
+- Typically, we'll use our GP to model the conditional expectation and allow the outcome to have for additional mean-zero gaussian error
+
+  $$\{f(x_1), f(x_2), f(x_3), \dotsc f(x_n)\} \sim \text{Normal}(\mu, \Sigma + I\sigma_y^2)$$
+  
+- In a **gaussian process regression**, our goal is to do inference on the **posterior** distribution for a "new" observation $f(x_{i^\prime})$ given our input values
+  - Given our prior, we know that this is going to be a **gaussian**
+  
+:::
+
+# Gaussian process regression
+
+- Let's try implementing this in R. The `mgpr` package has an easy-to-use implementation
+
+> Varvia, P., Räty, J., Packalen, P. (2023). mgpr: An R package for multivariate Gaussian process regression SoftwareX, vol. 24, 101563. https://doi.org/10.1016/j.softx.2023.101563
+
+```{r, messsage=F}
+library(mgpr)
+```
+
+```{r}
+gaus_process <- mgpr(datay = polls2012$obama.2way, datax = polls2012$day, polls2012, kernel = "rbf")
+```
+
+# Gaussian process regression
+
+```{r}
+gp_prediction <- predict(gaus_process, newdatax = matrix(seq(0, 34, by=.1)), credinter = .95)
+gp_plot <- data.frame(day = seq(0, 34, by=.1), obama.2way = gp_prediction$pred[,1], lower = gp_prediction$credinter$V1_lowlim, upper = gp_prediction$credinter$V1_upplim)
+polls2012 %>% ggplot(aes(x=day, y=obama.2way)) + geom_point() + geom_line(data=gp_plot, lwd=2, col="red") + geom_ribbon(aes(ymin = lower, ymax=upper), data=gp_plot, col="grey", alpha=.4) + theme_minimal() + labs(x="Day", y="Obama 2-way Vote Share", title = "Gaussian Process Regression")
+```
+
+# Gaussian process regression
+
+- What happens if we directly set the hyperparameters rather than optimize them?
+  - Let's make the "distances" between observations larger
+
+```{r, echo=T}
+gaus_process_2 <- mgpr(datay = polls2012$obama.2way, datax = polls2012$day, polls2012, kernel = "rbf", meanf= "avg", kernpar = list(sigma = gaus_process$sigma, corlen = .5))
+```
+
+# Gaussian process regression
+
+```{r}
+gp_prediction <- predict(gaus_process_2, newdatax = matrix(seq(0, 34, by=.1)), credinter = .95)
+gp_plot <- data.frame(day = seq(0, 34, by=.1), obama.2way = gp_prediction$pred[,1], lower = gp_prediction$credinter$V1_lowlim, upper = gp_prediction$credinter$V1_upplim)
+polls2012 %>% ggplot(aes(x=day, y=obama.2way)) + geom_point() + geom_line(data=gp_plot, lwd=2, col="red") + geom_ribbon(aes(ymin = lower, ymax=upper), data=gp_plot, col="grey", alpha=.4) + theme_minimal() + labs(x="Day", y="Obama 2-way Vote Share", title = "Gaussian Process Regression - Lower covariance")
+```
