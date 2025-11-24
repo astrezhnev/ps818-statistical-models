@@ -194,7 +194,7 @@ $$\mathbf{X_{\text{obs}}} = \begin{bmatrix}
   
 2. **Missing at Random (MAR)** - $M$ is independent of $X_{\text{mis}}$ conditional on $X_{\text{obs}}$
   - Missingness is *not* random, but the observed data is sufficient to predict it
-  - Missingness is **ignorable** once we condition on $X_{text{\obs}}$
+  - Missingness is **ignorable** once we condition on $X_{\text{obs}}$
   
 3. **Missing not at Random (MNAR)** - $M$ is not independent of $X_{\text{mis}}$ conditional on $X_{\text{obs}}$
   - Missingness is **not ignorable** even after conditioning on the observed data.
@@ -432,9 +432,8 @@ abline(v=1, col="red",lty=2)
 
   $$L(\mu, \Sigma | X) \propto \prod_{i=1}^n \text{Normal}(X_{i} | \mu, \Sigma)$$
 
-- Our goal is to get the distribution $P(X_{\text{mis}}|X_{\text{obs}})$. Conditional on $\mu$ and $\Sigma$, **missing at random** implies
-
-  $$P(X_{\text{mis}}|X_{\text{obs}}, \mu, \Sigma) = P(X_{\text{mis}}|X_{\text{obs}}, \mu, \Sigma)$$
+- Our goal is to get the distribution of $X_{\text{mis}}$ conditional on the parameters $\mu$ and $\Sigma$.
+  - Based on the model assumptions, **MAR** implies we can estimate $\hat{\mu}$ and $\hat{\Sigma}$ using **only** the observed data.
   
 # Multiple imputation
 
