@@ -1,0 +1,560 @@
+---
+title: "Week 13: Missing Data"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "November 24, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: false
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+---
+
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(splines)
+library(lubridate)
+
+options(digits=3)
+knitr::opts_chunk$set(echo = T)
+set.seed(53703)
+
+library(Amelia)
+
+```
+
+
+# This Week
+
+$$
+  \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+::: {.incremental}
+
+- **Missing Regressors**
+  - Listwise deletion
+  - Imputation methods
+  - Multiple imputation
+- **Missing Outcomes**
+  - Attrition bias
+  - Principal Stratification
+  - Lee (2009) bounds
+
+:::
+
+# Missing Data
+
+::: {.incremental}
+
+- Most social science datasets are not complete
+  - Some covariate values are **missing** for some observations.
+  
+- Why?
+  - Survey respondents choose not to answer a question.
+  - Governments choose not to report certain statistics
+  - Funding was not available to collect the relevant information
+  - Values are *suppressed* to ensure anonymity.
+
+- What to do?
+  - Listwise deletion
+  - (Mean) imputation
+  - Multiple imputation
+
+:::
+
+# Readings/Context
+
+- Most of the discussion of missingness + imputation in this talk comes from
+
+  > King, Gary, et al. "Analyzing incomplete political science data: An alternative algorithm for multiple imputation." American Political Science Review 95.1 (2001): 49-69.
+  
+- This paper ports over the multiple imputation technique from statistics to political science.
+  - The current implementation in the R package `Amelia` is based on the later article:
+  
+  > Blackwell, Matthew, James Honaker, and Gary King. "A unified approach to measurement error and missing data: overview and applications." Sociological Methods & Research 46.3 (2017): 303-341.
+
+
+# A running simulation example
+
+::: {.incremental}
+
+- To make understanding the consequences of missingness a bit easier, we'll work with a straightfoward simulation of a normal outcome model
+- Consider an outcome $Y_i$ and three covariates $X_{i1}, X_{i2}, X_{i3}$.
+
+  $$X_{i1} \sim \text{Normal}(1, 1)$$
+  $$X_{i2} \sim \text{Normal}(2,1)$$
+
+  $$X_{i3} \sim \text{Poisson}(2)$$
+
+- Our assumed DGP is
+
+  $$Y_i = X_{i1} + X_{i2} + X_{i3} + \epsilon_{i}$$
+  
+  where $\epsilon_{i} \sim \text{Normal}(0, 3)$
+  
+:::
+
+# A running simulation example
+
+```{r}
+gen_simulated_dataset <- function(N=1000, rho=0){
+  Sigma <- diag(c(1,1))
+  Sigma[1,2] <- rho
+  Sigma[2,1] <- rho
+  normals <- MASS::mvrnorm(n=N, mu = c(1,2), Sigma = Sigma)
+  
+  out_dat <- data.frame(x1 = normals[,1], x2 = normals[,2], x3 = rpois(N, 2))
+  out_dat$Y <- out_dat$x1 + out_dat$x2 + out_dat$x3 + rnorm(N, sd = sqrt(3))
+  return(out_dat)
+}
+```
+
+
+# Notation
+
+$$\mathbf{X} = \begin{bmatrix}
+4 & 1 & 3\\
+2 & 0 & 6 \\
+-3 & 0 & 2 \\
+-5 & 1 & 8\\
+3 & 0 & 7 
+\end{bmatrix}$$
+
+$$\mathbf{M} = \begin{bmatrix}
+1 & 1 & 0\\
+1 & 0 & 1 \\
+1 & 1 & 1 \\
+0 & 1 & 0\\
+0 & 1 & 1 
+\end{bmatrix}$$
+
+- $X$ - Complete data matrix
+- $M$ - Missingness indicator ($1$ = Observed, $0$ = Not observed)
+
+# Notation
+
+$$\mathbf{X_{\text{obs}}} = \begin{bmatrix}
+4 & 1 & \bf{?} \\
+2 & \bf{?}  & 6 \\
+-3 & 0 & 2 \\
+\bf{?} & 1 & \bf{?}\\
+\bf{?}  & 0 & 7 
+\end{bmatrix}$$
+
+
+- $X_{\text{obs}}$ - Observed data
+- $X_{\text{mis}}$ - Missing data
+
+# Three Assumptions
+
+- **Rubin (1978)** introduces three assumptions on the mechanism by which the missingness indicator is generated.
+
+::: {.incremental}
+
+1. **Missing Completely at Random (MCAR)** - $M$ is independent of both $X_{\text{obs}}$ and $X_{\text{mis}}$
+  - Suppose the data were missing b/c we accidentally spilled coffee over the dataset
+  - Observed data are essentially a fully random sample from the population of interest
+  
+2. **Missing at Random (MAR)** - $M$ is independent of $X_{\text{mis}}$ conditional on $X_{\text{obs}}$
+  - Missingness is *not* random, but the observed data is sufficient to predict it
+  - Missingness is **ignorable** once we condition on $X_{text{\obs}}$
+  
+3. **Missing not at Random (MNAR)** - $M$ is not independent of $X_{\text{mis}}$ conditional on $X_{\text{obs}}$
+  - Missingness is **not ignorable** even after conditioning on the observed data.
+  
+:::
+
+# Listwise deletion
+
+:::{.incremental}
+
+- The simplest approach to dealing with missing data is to just **ignore** it.
+  - **Listwise deletion**: Analyse the data with **only** those observations that have no missing values
+  
+- When is this unbiased?
+  - Under **MCAR**
+  
+- Otherwise, parameter estimates may be biased!
+  - **Intuitively**: Conditioning only on observations with observed data induces a form of **selection** bias
+  - Easiest to think about this in terms of a form of **collider bias** in a causal inference framework.
+  
+:::
+
+# Illustration
+
+- Consider a simulation of our DGP with a simple **MAR** missingness mechanism
+  - Observations with $X_{i2} > 2$ are missing $X_{i1}$ with probability $.4$
+
+```{r, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset()
+  missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 2, .4, 0))
+  dataset$x1[missingness_x1 == 1] <- NA
+  coef_x2[i] <- coef(lm(Y ~ x1 + x2 + x3, data=dataset))["x2"]
+}
+```
+
+# Illustration
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2")
+abline(v=1, col="red",lty=2)
+```
+
+# Illustration
+
+:::{.incremental}
+
+- Why is there no bias?
+  - Because $X_1$ and $X_2$ are completely independent of one another.
+  
+- The key source of **bias** comes from the induced association between $X_1$ and $Y$ as a result of the correlation between $X_2$ and $X_1$
+  - Missingness driven by $X_2$ **makes** certain values of $X_1$ more/less likely in the complete dataset.
+  
+:::
+  
+# Illustration with possible bias
+
+- What happens if we induce a correlation between $X_1$ and $X_2$
+
+```{r, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset(rho=.5)
+  missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 2, .4, 0))
+  dataset$x1[missingness_x1 == 1] <- NA
+  coef_x2[i] <- coef(lm(Y ~ x1 + x2 + x3, data=dataset))["x2"]
+}
+```
+
+# Illustration with possible bias
+
+```{r}
+hist(dataset$x1, xlab="X1 in the Observed Data")
+```
+
+# Illustration with possible bias
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2")
+abline(v=1, col="red",lty=2)
+```
+
+# Illustration
+
+::: {.incremental}
+
+- Still no bias **despite** the fact that the distribution of $X_1$ is different in the observed data compared to the overall data.
+
+- Why?
+  - We've assumed a constant linear "marginal" effect of $X_2$ on $Y$ across the entire distribution of $X_1$.
+  
+- What if instead, we had a (mean-zero) interaction between the two in the outcome model?
+  
+```{r}
+gen_simulated_dataset_interact <- function(N=1000, rho=0){
+  Sigma <- diag(c(1,1))
+  Sigma[1,2] <- rho
+  Sigma[2,1] <- rho
+  normals <- MASS::mvrnorm(n=N, mu = c(1,2), Sigma = Sigma)
+  
+  out_dat <- data.frame(x1 = normals[,1], x2 = normals[,2], x3 = rpois(N, 2))
+  out_dat$Y <- out_dat$x1 + out_dat$x2 + out_dat$x3 + 3*(out_dat$x1 - 1)*(out_dat$x2 -2) + rnorm(N, sd = sqrt(3))
+  return(out_dat)
+}
+```
+
+:::
+
+# Illustration with actual bias
+
+```{r, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset_interact(rho=.5)
+  missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 0, .4, 0))
+  dataset$x1[missingness_x1 == 1] <- NA
+  coef_x2[i] <- coef(lm(Y ~ x1 + x2 + x3, data=dataset))["x2"]
+}
+mean(coef_x2)
+```
+
+# Illustration with actual bias
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2")
+abline(v=1, col="red",lty=2)
+```
+
+# Listwise Deletion
+
+::: {.incremental}
+
+- Unless our data are truly **MCAR**, listwise deletion will result in a sample where the distribution of $X$ differs from the distribution in the hypothetical "no missingness" sample
+
+- Whether this matters for statistical inference depends on the underlying estimand and the nature of the missingness.
+  - e.g. For causal inference, even if we have randomized treatment, if the correlates of missingness are also associated with **treatment effects**, we will be biased for the population ATE even if we have a valid in-sample ATE.
+
+:::
+
+# Missing indicator method
+
+- What if we imputed the missing data for one variable using some arbitrary value (e.g. its mean) but augmented our regression to include an indicator that the data was missing (and estimate an additional coefficient).
+
+```{r, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset_interact(rho=.5)
+  dataset$missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 0, .4, 0))
+  dataset$x1[dataset$missingness_x1 == 1] <- NA
+  dataset$x1[dataset$missingness_x1 == 1] <- mean(dataset$x1, na.rm=T)
+  coef_x2[i] <- coef(lm(Y ~ x1 + x2 + x3 + missingness_x1, data=dataset))["x2"]
+}
+mean(coef_x2)
+```
+
+# Illustration with actual bias
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2", main="Missing indicator method")
+abline(v=1, col="red",lty=2)
+```
+
+# Missing indicator method
+
+::: {.incremental}
+
+- That didn't work very well!
+  - In fact, it's basically just as good as **mean imputation** without the indicator (which is to say...not good).
+  
+- Why?
+  - Because the **actual values** of $X_1$ are relevant to the interaction term in the outcome model!
+  
+- This can be a useful trick for saving sample size when your covariates with missingness are purely **prognostic**
+  - But be careful if they are confounders.
+  
+:::
+
+# Regression imputation
+
+- What if we modelled $X_1$ using the observed data
+  - Predicted using that model back onto the missing data
+  
+- Relies on the **MAR** assumption - Conditional on the observed covariates, missingness is as-if-random
+  - Here, essentially that $E[X_1 | X_2]$ is the same in the observed vs. the missing sample
+  
+# Regression imputation
+
+```{r, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset_interact(rho=.5)
+  dataset$missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 0, .4, 0))
+  dataset$x1[dataset$missingness_x1 == 1] <- NA
+  # Regression of X_1 on X_2, X_3
+  imputation_reg <- lm(x1 ~ x2 + x3, data=dataset)
+  dataset$x1[is.na(dataset$x1)] <- predict(imputation_reg, newdata=dataset %>% filter(is.na(x1)))
+  
+  coef_x2[i] <- coef(lm(Y ~ x1 + x2 + x3, data=dataset))["x2"]
+}
+mean(coef_x2)
+```
+
+# Regression imputation
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2", main="Regression Imputation")
+abline(v=1, col="red",lty=2)
+```
+
+# Regression imputation
+
+::: {.incremental}
+
+- We do better...
+  - ...but not perfect!
+  
+- We still have **mis-measured** values of $X_{i1}$ even if that measurement error is mean-zero.
+  - And what happens with measurement error in the regressors? We get bias!
+  
+:::
+
+# Multiple imputation
+
+- Multiple imputation assumes a likelihood model for the **regressors**
+
+  $$L(\theta | X) \propto \prod_{i=1}^n f(X_{i} | \theta)$$
+  
+- The particular modelling assumption from **King et. al. (2001)** is that the regressors are **multivariate normal**
+
+  $$L(\mu, \Sigma | X) \propto \prod_{i=1}^n \text{Normal}(X_{i} | \mu, \Sigma)$$
+
+- Our goal is to get the distribution $P(X_{\text{mis}}|X_{\text{obs}})$. Conditional on $\mu$ and $\Sigma$, **missing at random** implies
+
+  $$P(X_{\text{mis}}|X_{\text{obs}}, \mu, \Sigma) = P(X_{\text{mis}}|X_{\text{obs}}, \mu, \Sigma)$$
+  
+# Multiple imputation
+
+:::{.incremental}
+
+- Imputation (single step)
+
+  1. **Estimate** $\mu$ and $\Sigma$ using $X_{\text{obs}}$ under the assumed likelihood model
+
+  2. Conditional on $\hat{\mu}$ and $\hat{\Sigma}$, generate an **imputation** for $X_{\text{mis}}$ by drawing from its distribution.
+
+- `Amelia` implements an EM technique to estimate $\hat{\mu}$ and $\hat{\Sigma}$ via maximum likelihood.
+  - But what's "multiple" about it?
+  
+- We need to account for two sources of uncertainty in the estimation process 
+  - Uncertainty in $\hat{\mu}$ and $\hat{\Sigma}$ (estimation uncertainty)
+  - Uncertainty in $X_{\text{mis}}$ even after conditioning on the mean/variance (fundamental uncertainty)
+  
+:::
+
+# Multiple imputation
+
+::: {.incremental}
+
+- Generate $M$ imputations using the imputation procedure.
+- For each imputation $m$:
+  - Analyze each "complete" dataset using conventional methods; generate an estimate of the target parameter $\hat{\beta}_m$
+
+- Aggregate to get a point estimate **(Rubin, 1978)**
+
+  $$\hat{\beta} = \frac{1}{M} \sum_{m=1}^M \hat{\beta}_m$$
+  
+- Sampling variance is the average of the variance of the component estimates plus the variance of the estimates themselves around the mean
+
+  $$Var(\hat{\beta}) = \frac{1}{M} \sum_{m=1}^M Var(\hat{\beta}_m) + S^2_M(1 - 1/M)$$
+  
+  $$S^2_M = \frac{1}{M-1} \sum_{m=1}^M (\hat{\beta}_m - \hat{\beta})^2$$
+
+:::
+
+# Multiple imputation
+
+- This is popularly implemented in `Amelia` (which also will do imputation for **observed cases** with gaussian measurement error).
+  
+```{r ameliasim, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset_interact(rho=.5)
+  dataset$missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 0, .4, 0))
+  dataset$x1[dataset$missingness_x1 == 1] <- NA
+  # Amelia
+  dataset_regressors <- dataset %>% select(x1, x2)
+  mi_datasets <- amelia(dataset_regressors, p2s=0)
+  coefficients <- rep(NA, length(mi_datasets$imputations))
+  for (m in 1:length(mi_datasets$imputations)){
+    dataset_temp <- mi_datasets$imputations[[m]]
+    dataset_temp$Y <- dataset$Y
+    dataset_temp$x3 <- dataset$x3
+    coefficients[m] <- coef(lm(Y ~ x1 + x2 + x3, data=dataset_temp))["x2"]
+  }
+  coef_x2[i] <- mean(coefficients)
+}
+mean(coef_x2)
+```
+
+# Multiple imputation
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2", main="Multiple Imputation")
+abline(v=1, col="red",lty=2)
+```
+
+# Multiple imputation
+
+- Multiple imputation is **also** implemented in `mice` (Multiple Imputation by Chained Equations)
+  - Implements a lot of other outcome models!
+
+```{r}
+library(mice)
+```
+
+```{r mice, echo=T}
+iter <- 1000
+coef_x2 <- rep(NA, iter)
+for (i in 1:iter){
+  dataset <- gen_simulated_dataset_interact(rho=.5)
+  dataset$missingness_x1 <- rbinom(nrow(dataset),1, ifelse(dataset$x2 >= 0, .4, 0))
+  dataset$x1[dataset$missingness_x1 == 1] <- NA
+  # Amelia
+  dataset_regressors <- dataset %>% select(x1, x2)
+  mi_datasets <- mice(dataset_regressors, method="norm", printFlag=F)
+  coefficients <- rep(NA, length(mi_datasets$imputations))
+  for (m in 1:length(mi_datasets$imputations)){
+    dataset_temp <- complete(mi_datasets, m)
+    dataset_temp$Y <- dataset$Y
+    dataset_temp$x3 <- dataset$x3
+    coefficients[m] <- coef(lm(Y ~ x1 + x2 + x3, data=dataset_temp))["x2"]
+  }
+  coef_x2[i] <- mean(coefficients)
+}
+mean(coef_x2)
+```
+
+# Multiple Imputation
+
+```{r, fig.align = "center"}
+hist(coef_x2, xlab="Coefficient on X2", main="Multiple Imputation (using MICE)")
+abline(v=1, col="red",lty=2)
+```
+
+# Summary
+
+- Missing data is **extremely common**
+  - But the consequences of ignoring it vary wildly across research tasks.
+  
+- **Missing completely at random** - Listwise deletion is fine
+- **Missing at random** - Multiple imputation can help (but not a silver bullet! Challenging modeling task!)
+- **Missing not at random** - Can't really fix this without additional design assumptions!
+
+- Careful with just throwing the dataset into `Amelia` or `mice` and hoping everything works out!
+  - Best when you have a genuinely clear story for the missingness process
+  - For regression estimation of selection-on-observables designs, think about the connection between **missingness** and the treatment variable of interest
