@@ -1,0 +1,490 @@
+---
+title: "Week 14: Big Regressions"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "December 1, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: false
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+---
+
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(splines)
+library(lubridate)
+
+options(digits=3)
+knitr::opts_chunk$set(echo = T)
+set.seed(53703)
+```
+
+
+# This Week
+
+$$
+  \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+::: {.incremental}
+
+# This Week
+
+- Analyses with **big data**
+  - Data that cannot fit entirely into computer **memory** (RAM)
+  
+- General principles for handling large data files
+
+- **Stochastic** optimization methods
+  - Stochastic gradient descent for maximum likelihood models
+  
+- **Sufficient statistics** computed out-of-memory
+  - Tricks for regressions with many **discrete regressors**
+
+:::
+
+# Review: Generalized Linear Models
+
+::: {.incremental}
+
+- Generalized linear models (GLMs) have three components:
+  1) A parametric distribution on $Y_i|X_i$ ("stochastic component")
+  2) A linear predictor: $\eta_i = X_i^{\prime}\beta = \beta_0 + \beta_1X_{i1} + \beta_2X_{i2} + \dotsc \beta_kX_{ik}$ ("systematic component")
+  3) A link function $g()$ applied to the CEF $E[Y_i|X_i]$ that yields the linear predictor
+
+      $$g(E[Y_i | X_i]) = \eta_i$$
+
+  - Alternatively, we can write the CEF in terms of the "inverse-link" $g^{-1}()$ applied to the linear predictor
+
+      $$E[Y_i | X_i] = g^{-1}(\eta_i)$$
+
+:::
+
+# Review: Logistic regression
+
+::: {.incremental}
+
+- The "logit" or "logistic" GLM models the **log-odds** of a binary outcome as a function of the linear predictor $X_i^{\prime}\beta$
+
+  $$Y_i \underset{\text{i.i.d}}{\sim} \text{Bernoulli}(\pi_i)$$
+
+  $$E[Y_i | X_i] = Pr(Y_i = 1 | X_i) = \pi_i$$
+
+  $$\log\bigg(\frac{\pi_i}{1-\pi_i}\bigg) = X_i^{\prime}\beta$$
+
+- Alternatively, this is written in terms of the "inverse-link" function (the logistic function) that relates $\pi_i$ to $g^{-1}(X_i^{\prime}\beta)$
+
+  $$\pi_i = \frac{\exp(X_i^{\prime}\beta)}{1 + \exp(X_i^{\prime}\beta)} = \frac{1}{1 + \exp(-X_i^{\prime}\beta)}$$
+
+:::
+
+# Review: Logistic regression
+
+- The logistic function maps inputs on $\mathbb{R}$ to $(0, 1)$
+
+```{r, echo=F, fig.width=5, fig.height = 3, fig.align="center"}
+logistic <- function(x) 1/(1 + exp(-x))
+logistic_curve <- ggplot() + xlim(-5, 5) + ylim(0,1) + geom_function(fun=logistic) + theme_bw() + ylab(expression(pi)) + xlab(expression(paste("X",beta))) + geom_vline(xintercept=0, lty=2) + ggtitle("Logistic function")
+logistic_curve
+```
+
+# Review: Logistic regression
+
+::: {.incremental}
+
+- Recall the log-likelihood for the logistic regression
+
+$$\log f(\mathbf{y} | \beta, \mathbf{X}) = \sum_{i=1}^{n} \left[ y_i (X_i^{\prime} \beta) - \log(1 + \exp(X_i^{\prime}  \beta)) \right]$$
+
+- We can use the chain rule to get the gradient
+
+$$\nabla \log f(\mathbf{y} | \beta, \mathbf{X}) = \sum_{i=1}^{n} \left[ y_i X_i  - \frac{\exp(X_i^\prime\beta)}{1 + \exp(X_i^\prime\beta)}X_i \right]$$
+
+- Using the definition of the "predicted probabilities" $\pi_i$
+
+$$\nabla \log f(\mathbf{y} | \beta, \mathbf{X}) = \sum_{i=1}^{n} (y_i - \pi_i)X_i$$
+
+:::
+
+# Review: Newton-Raphson
+
+::: {.incremental}
+
+- We obtain an estimate of $\beta$, $\hat{\beta}$ using maximum likelihood.
+- Our MLE estimator is:
+
+  $$\hat{\beta} = \argmax_\beta \ \log f(\mathbf{y} | \beta, \mathbf{X})$$
+
+- Recall our score function is the gradient of the log-likelihood
+
+  $$S(\beta) = \nabla \log f(\mathbf{y} | \beta, \mathbf{X}) = \begin{bmatrix} \frac{\partial}{\partial \beta_0} \log f(\mathbf{y} | \beta, \mathbf{X}) \\
+\frac{\partial}{\partial \beta_1} \log f(\mathbf{y} | \beta, \mathbf{X}) \\
+\vdots \\
+\frac{\partial}{\partial \beta_k} \log f(\mathbf{y} | \beta, \mathbf{X})  \end{bmatrix}$$
+
+- The likelihood is convex, so finding the maximum equates to solving for the value of $\beta$ that sets $S(\beta) = 0$
+  - A common numerical method is **Newton-Raphson**
+
+:::
+
+# Review: Newton-Raphson
+
+::: {.incremental}
+
+- Given some initial starting values $\hat{\beta}^{(0)}$, our update steps $\hat{\beta}^{(t+1)}$ proceed deterministically until convergence using previous values $\hat{\beta}^{(t)}$
+
+  $$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)} + \bigg(-\mathbf{H}^{-1}(\hat{\beta}^{(t)})\bigg) \nabla \log f(\mathbf{y} | \hat{\beta}^{(t)}, \mathbf{X})$$
+  
+- What is this information?
+  - The **gradient** of the log-likelihood: $\nabla \log f(\mathbf{y} | \hat{\beta}^{(t)}, \mathbf{X})$
+  - The (negative) inverse **hessian** (step size)
+- Why is this hard? Why don't we do this for "machine learning"
+  - Because inverting large matrices is computationally costly
+  
+:::
+
+# Gradient Ascent
+
+::: {.incremental}
+
+- Instead of changing the "step size" in a data-dependent manner, what if we just fixed it 
+- The **gradient ascent** algorithm would instead use update steps
+
+  $$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)} + \gamma_{t}\nabla \log f(\mathbf{y} | \hat{\beta}^{(t)}, \mathbf{X})$$
+
+- We refer to $\gamma = \{\gamma_0, \gamma_1, \gamma_2, \dotsc \} > 0$ as our "learning rate schedule"
+  - Too big, we overshoot
+  - Too small, we don't explore the likelihood
+- Often just pick a constant rate that doesn't depend on the iteration $\gamma_0 = \gamma_1 = \gamma_2 = \dotsc$
+  - Alternatively, set some degree of **decay** (e.g. exponential decay $\gamma_{t} = \gamma_0 \times e^{-kt}$)
+
+:::
+
+# Large datasets with `data.table`
+
+- We're going to look at data management with the R package `data.table`
+
+```{r, message=F, warning=F}
+library(data.table)
+```
+
+- Why use `data.table` instead of the standard `read_csv` or `read.csv`?
+  - It handles **very large** datasets much better!
+  - Faster file-IO, "chunking" of datasets that can't fit into memory, operations directly on datasets (avoid copying and duplicating memory), etc...
+- If you genuinely have an **extremely large** dataset, you'll probably be working with a **relational database**
+  - Typical interaction via the **SQL** language. 
+  - If you know `tidy` verbs, you can learn SQL easily. Also similar motivation for `data.table` syntax
+  - Outside the scope of this class at this moment (but core principles remain).
+
+# Example: NC Voter File
+
+- Let's do a simple predictive model:
+  - What is the probability that someone voted in the **2024 General Election** given known information (age, party, gender, race) as well as their prior voting history.
+- We'll work with the most current version of the North Carolina Voter File and the Voter History file (since it's free to download)
+  - Millions of records! 
+  - Unfortunately...two separate databases that need to be merged.
+  - One is a **6 GB** text file, the other is **4 GB** text file
+  
+# Example: NC Voter File
+
+- Let's load the data into R with `fread()`
+
+```{r, echo=T}
+ncvhis <- fread("data/ncvhis_Statewide.txt") # Reads in the whole voter history file
+ncvhis <- ncvhis[,c("ncid","election_lbl", "voting_method")] # We just want the ID of the voter and which elections they voted in
+ncvhis <- ncvhis[!duplicated(ncvhis, by = c("ncid", "election_lbl"))] # Get rid of duplicates
+gc() # "Garbage collect" to reallocate memory.
+```
+
+# Example: NC Voter File
+
+- We want to make the dataset *wide* so that we can merge the elections where the voter voted with the actual voter file.
+  - Each column should be an election - the content should be an indicator for "voted/didn't vote"
+
+```{r, echo=T}
+ncvhis_wide <- dcast(ncvhis, ncid ~ election_lbl, value.var = "voting_method") # Equivalent of pivot.wider
+rm(ncvhis) # Get rid of the old data.table
+gc() # Garbage collect to free up memory!
+head(ncvhis_wide) # What does the new dataset look like?
+```
+
+# Example: NC Voter File
+
+- Let's grab the last five general elections
+
+```{r, echo=T}
+ncvhis_wide <- ncvhis_wide[,c("ncid","11/05/2024", "11/08/2022", "11/03/2020", "11/06/2018", "11/08/2016")]
+ncvhis_wide[,`11/05/2024` := fifelse(!is.na(`11/05/2024`), 1, 0)] # Modify the columns *directly*
+ncvhis_wide[,`11/08/2022` := fifelse(!is.na(`11/08/2022`), 1, 0)] 
+ncvhis_wide[,`11/03/2020` := fifelse(!is.na(`11/03/2020`), 1, 0)] 
+ncvhis_wide[,`11/06/2018` := fifelse(!is.na(`11/06/2018`), 1, 0)] 
+ncvhis_wide[,`11/08/2016` := fifelse(!is.na(`11/08/2016`), 1, 0)]
+setnames(ncvhis_wide, old = c("11/05/2024", "11/08/2022", "11/03/2020", "11/06/2018", "11/08/2016"), 
+         new = c("voted2024", "voted2022", "voted2020", "voted2018", "voted2016"))
+```
+
+# Example: NC Voter File
+
+- Now we need to merge it to the voter file. Let's load up the voter file!
+
+```{r}
+ncvoter <- fread("data/ncvoter_Statewide.txt")
+ncvoter <- ncvoter[voter_status_desc != "REMOVED"&voter_status_desc != "DENIED"]
+```
+
+- We'll need to now merge based on `ncid`
+
+# Example: NC Voter File
+
+```{r}
+ncvoter <- merge(ncvoter, ncvhis_wide, by="ncid", all.x=T, all.y=F)
+rm(ncvhis_wide) # Get rid of the old file!
+ncvoter <- ncvoter[,c('ncid','voted2024', 'voted2020','voted2016','voted2022','voted2018','birth_year','gender_code','ethnic_code', 'party_cd', 'race_code')]
+gc()
+```
+
+- Need to make any voter entries that didn't match into **non-voters**
+
+```{r}
+ncvoter[is.na(voted2024), voted2024 := 0] # Again, modifying the columns *directly*
+ncvoter[is.na(voted2022), voted2022 := 0]
+ncvoter[is.na(voted2020), voted2020 := 0]
+ncvoter[is.na(voted2018), voted2018 := 0]
+ncvoter[is.na(voted2016), voted2016 := 0]
+```
+
+- How many voted?
+
+```{r}
+mean(ncvoter$voted2024)
+```
+
+# Trying to fit logistic regression
+
+- Can we actually fit `glm()` to a dataset that takes up more than half of my laptop's memory?
+  - We can - this implementation does work - but **only just**
+
+```{r}
+voting_reg <- glm(voted2024 ~ voted2020 + voted2016 + voted2022 + voted2018 + 
+                    I(birth_year <= 1964) + I(birth_year > 1964&birth_year <= 1980) + 
+                    I(birth_year > 1997) + I(gender_code == "M") + I(ethnic_code == "HL") + 
+                    I(race_code == "W") + I(party_cd == "REP") + 
+                    I(party_cd == "UNA") + I(party_cd == "LIB") + I(party_cd == "GRE"), data=ncvoter, family=binomial(link="logit"))
+gc()
+```
+
+# Trying to fit logistic regression
+
+```{r}
+summary(voting_reg)
+```
+
+# Sparse Matrices
+
+- Let's consider how large the data matrix is when I use `model.matrix` for the regression.
+
+```{r}
+big.design.matrix <- model.matrix(voted2024 ~ voted2020 + voted2016 + voted2022 + voted2018 + I(birth_year <= 1964) + I(birth_year > 1964&birth_year <= 1980) + I(birth_year > 1997) + I(gender_code == "M") + I(ethnic_code == "HL") + I(race_code == "W") + I(party_cd == "REP") + I(party_cd == "UNA") + I(party_cd == "LIB") + I(party_cd == "GRE"), data=ncvoter)
+print(object.size(big.design.matrix), units="MB")
+rm(big.design.matrix)
+gc()
+```
+
+# Sparse Matrices
+
+- A more memory-efficient way of storing things is in a **sparse** matrix.
+  - Especially when most entries are **zero**. We can just store a list of all of the indices that are equal to $1$
+  - Nice implementation in `MatrixModels`
+  - Lots of libraries are designed around using **sparse** matrices - consider these as a solution if you are running analyses that involve matrices with lots of zeroes.
+  
+```{r}
+library(MatrixModels)
+sparse.design.matrix <- model.Matrix(voted2024 ~ voted2020 + voted2016 + voted2022 + voted2018 + I(birth_year <= 1964) + I(birth_year > 1964&birth_year <= 1980) + I(birth_year > 1997) + I(gender_code == "M") + I(ethnic_code == "HL") + I(race_code == "W") + I(party_cd == "REP") + I(party_cd == "UNA") + I(party_cd == "LIB") + I(party_cd == "GRE"), data=ncvoter, sparse=T)
+print(object.size(sparse.design.matrix), units="MB")
+rm(sparse.design.matrix)
+gc()
+```
+
+# Stochastic Gradient Descent
+
+::: {.incremental}
+
+- Let's return to our **algorithm** for constructing estimates of $\beta$
+  - In conventional ('batch') gradient ascent, we used the **entire** dataset to compute the gradient.
+  - But what if we can't load the entire dataset into memory!
+  
+- **Solution**: "Online" learning
+  - What if we computed the gradient updates using a randomly selected **single observation**?
+  
+$$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)} + \gamma_{t+1} \nabla \log f(y_{t+1} | \hat{\beta}^{(t)}, X_{t+1})$$
+
+- **Robbins and Munro (1951)** showed that this will converge as the number of iterations goes to infinity subject to conditions on the learning rate schedule
+  - $\sum_{t=1}^{\infty} \gamma_{t} = \infty$, $\sum_{t=1}^{\infty} \gamma_{t}^2 < \infty$
+  
+- Can improve performance further if we use "mini-batches" to estimate the gradient (more than one randomly sampled observation).
+
+:::
+
+# Stochastic Gradient Descent
+
+- A very nice implementation is in the R `sgd` package.
+  - Handles all the usual formula syntax stuff for a large number of statistical models.
+  
+```{r}
+library(sgd)
+```
+
+- Let's implement standard `sgd` for the logistic GLM from before and see how close it gets
+
+```{r}
+set.seed(53703)
+voting_reg_sgd <- sgd(voted2024 ~ voted2020 + voted2016 + voted2022 + voted2018 + I(birth_year <= 1964) + I(birth_year > 1964&birth_year <= 1980) + I(birth_year > 1997) + I(gender_code == "M") + I(ethnic_code == "HL") + I(race_code == "W") + I(party_cd == "REP") + I(party_cd == "UNA") + I(party_cd == "LIB") + I(party_cd == "GRE"), data=ncvoter, model = "glm", model.control = list(family=binomial(link="logit")),
+                      sgd.control = list(method="sgd"))
+voting_reg_sgd$converged
+gc()
+```
+
+# Stochastic Gradient Descent
+
+```{r}
+coef(voting_reg_sgd)
+```
+
+```{r}
+coef(voting_reg)
+```
+
+# Stochastic Gradient Descent
+
+- Let's check the in-sample predictions (fitted data)
+
+```{r}
+fitted(voting_reg_sgd)[1:10]
+```
+
+```{r}
+fitted(voting_reg)[1:10]
+```
+
+- Remember, the guarantees of SGD are **asymptotic**
+  - Actual performance in a finite number of iterations is highly sensitive to the specified **learning rate**
+  
+# Stochastic Gradient Descent
+
+- Lots of recent work on improving these methods (e.g. **adaptive** gradient methods, **momentum**)
+  - Requires some additional parameters to keep in memory (previous values of the gradient)
+  
+- Outside the scope of this course, but important to be aware.
+  - Currently the most popular approach for initial training of neural networks is the **Adam** optimizer.
+  
+# Stochastic Gradient Descent
+
+- Let's see how well we at least do with the "adaptive" learning rate?
+
+```{r}
+set.seed(53703)
+voting_reg_ada_sgd <- sgd(voted2024 ~ voted2020 + voted2016 + voted2022 + voted2018 + I(birth_year <= 1964) + I(birth_year > 1964&birth_year <= 1980) + I(birth_year > 1997) + I(gender_code == "M") + I(ethnic_code == "HL") + I(race_code == "W") + I(party_cd == "REP") + I(party_cd == "UNA") + I(party_cd == "LIB") + I(party_cd == "GRE"), data=ncvoter, model = "glm", model.control = list(family=binomial(link="logit")),
+                      sgd.control = list(method="sgd", lr="adagrad"))
+voting_reg_ada_sgd$converged
+gc()
+```
+
+# Stochastic Gradient Descent
+
+```{r}
+coef(voting_reg_ada_sgd)
+```
+
+```{r}
+coef(voting_reg)
+```
+
+# Stochastic Gradient Descent
+
+- Seems to be doing **worse** - we missed the intercept!
+
+```{r}
+fitted(voting_reg_ada_sgd)[1:10]
+```
+
+```{r}
+fitted(voting_reg)[1:10]
+```
+
+# Stochastic Gradient Descent
+
+- **Toulis, Tran and Airoldi (2015)** introduce a clever technique that tries to reduce sensitivity to learning rate parameter specification by defining the update steps **implicitly** and using methods for solving implicit equations.
+  
+  $$\hat{\beta}^{(t+1)} =  \hat{\beta}^{(t)} + \gamma_{t+1} \nabla \log f(y_{t+1} | \hat{\beta}^{(t+1)}, X_{t+1})$$
+
+
+# Stochastic Gradient Descent
+
+- How well does the **averaged-implicit** SGD work here?
+
+```{r}
+set.seed(53703)
+voting_reg_isgd <- sgd(voted2024 ~ voted2020 + voted2016 + voted2022 + voted2018 + I(birth_year <= 1964) + I(birth_year > 1964&birth_year <= 1980) + I(birth_year > 1997) + I(gender_code == "M") + I(ethnic_code == "HL") + I(race_code == "W") + I(party_cd == "REP") + I(party_cd == "UNA") + I(party_cd == "LIB") + I(party_cd == "GRE"), data=ncvoter, model = "glm", model.control = list(family=binomial(link="logit")),
+                      sgd.control = list(method="ai-sgd", lr="adagrad"))
+voting_reg_isgd$converged
+gc()
+```
+
+# Stochastic Gradient Descent
+
+```{r}
+coef(voting_reg_isgd)
+```
+
+```{r}
+coef(voting_reg)
+```
+
+# Stochastic Gradient Descent
+
+- Overall not bad - and that's only after a few passes over the dataset!
+
+```{r}
+fitted(voting_reg_isgd)[1:10]
+```
+
+```{r}
+fitted(voting_reg)[1:10]
+```
