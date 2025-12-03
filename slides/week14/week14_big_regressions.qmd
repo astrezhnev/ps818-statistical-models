@@ -74,9 +74,6 @@ $$
 
 - **Stochastic** optimization methods
   - Stochastic gradient descent for maximum likelihood models
-  
-- **Sufficient statistics** computed out-of-memory
-  - Tricks for regressions with many **discrete regressors**
 
 :::
 
@@ -488,3 +485,4 @@ fitted(voting_reg_isgd)[1:10]
 ```{r}
 fitted(voting_reg)[1:10]
 ```
+

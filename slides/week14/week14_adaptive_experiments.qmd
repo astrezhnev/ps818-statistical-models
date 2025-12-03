@@ -1,0 +1,306 @@
+---
+title: "Week 14: Adaptive Experiments"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "December 3, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: false
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+---
+
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+library(splines)
+library(lubridate)
+
+options(digits=3)
+knitr::opts_chunk$set(echo = T)
+set.seed(53703)
+```
+
+
+# This Week
+
+$$
+  \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+::: {.incremental}
+
+# This Week
+
+- Experimentation **in production**
+  - Trade-offs between assigning **optimal** treatments vs. evaluating new ones.
+  
+- Three ways to do "adaptive" assignment
+  - Variance-optimal assignment via **Neyman allocation**
+  - Optimal pair matching for precision
+  - **Thompson sampling** rule for selecting the most "effective" treatment arm
+
+- Estimation of treatment effects via inverse-propensity weighting
+
+- Some ideas of what to do with your pilot experiment!
+  
+:::
+
+# Adaptive Experimentation
+
+::: {.incremental}
+
+- Typical experiments assign treatment completely at random.
+  - But can we do **better** than random assignment?
+  - And can we do this using information collected **during the experiment**?
+  
+- **Adaptive** experimental designs vary the probability of treatment assignment from unit-to-unit based on outcome information from previous tasks.
+  - "Bandit" problems
+  - We'll more typically work with "batch"-adaptive designs in political science.
+  
+- **Intuition** - Partition your sample of $N$ unit into some finite number of **batches**
+  - First batch of units is a standard randomized experiment (complete randomization)
+  - Second batch of units alters the assignment probabilities **depending** on the outcomes/effects observed in batch 1
+  - Next batch further adjusts using information from batches 1 and 2!
+  - Keep going until you're done with your $N$.
+
+- Depending on how we're adjusting the randomization scheme, we may have to adjust the estimation strategy
+  - We might be inducing a selection-into-treatment bias.
+  
+:::
+
+# Notation
+
+::: {.incremental}
+
+- Sample of $N$ units from the population indexed by $i$
+- Observed outcome $Y_i$
+- Binary treatment indicator $D_i$.
+  - Units receiving "treatment": $D_i = 1$
+  - Units receiving "control": $D_i = 0$
+- **Potential outcomes**
+  - $Y_i(d)$ is the value that we *would* observe if treatment $d$ was assigned to unit $i$
+- **Assumptions**:
+  - Consistency $Y_i(d) = Y_i$ if $D_i = d$
+  - Positivity $0 < Pr(D_i = 1) < 1$
+  - Ignorability $Y_i(1), Y_i(0) {\perp \! \! \! \perp} D_i$
+  
+:::
+
+# Neyman Allocation
+
+::: {.incremental}
+
+- Suppose our target of inference is the **Sample Average Treatment Effect**
+
+  $$\tau = \frac{1}{N}\sum_{i=1}^N Y_i(1) - \frac{1}{N}\sum_{i=1}^N Y_i(0)$$
+  $$\tau = \bar{Y}(1) - \bar{Y}(0)$$
+  
+- Define the **sample variance** of the potential outcomes as:
+
+  $$S^2(d) = \frac{1}{N-1} \sum_{i=1}^N \bigg[Y_i(d) - \bar{Y}(d)\bigg]^2$$
+
+- Our typical estimator under **complete randomization** of treatment ($N_0$ units allocated to control, $N_1$ allocated to treatment) is the difference-in-means
+
+  $$\hat{\tau} \frac{1}{N_1}\sum_{i: D_i = 1} Y_i  -\frac{1}{N_0}\sum_{i: D_i = 0} Y_i$$
+  
+:::
+
+# Neyman Allocation
+
+::: {.incremental}
+
+- What's the variance of $\hat{\tau}$? A classic **upper bound** (the "Neyman" variance) is 
+
+  $$Var({\hat{\tau}}) \le \frac{S^2(1)}{N_1} + \frac{S^2(0)}{N_0} = \frac{(N - N_1) S^2(1) + N_1 S^2(0)}{N_1(N - N_1)}$$
+  $$Var({\hat{\tau}}) \le \frac{N [S^2(1)] +N_1 [S^2(0) - S^2(1)]}{N_1N - N_1^2}$$
+  
+- When is a **uniform** allocation going to be optimal?
+  - When we have **homoskedasticity** - if the variances of the outcomes are the same across treated and control groups.
+  
+- But what if they're not? Can we do better than uniform allocation?
+  - **Intuition**: Use more of your sample size to learn about the **noiser** group!
+  
+:::
+
+# Neyman Allocation
+
+::: {.incremental}
+
+- An alternative to uniform allocation is **Neyman allocation**
+
+  $$Pr(D_i = d) = \frac{S^2(d)}{S^2(1) + S^2(0)}$$
+  
+- Give a **higher probability** to the treatment arm with the higher outcome variance.
+
+- More efficient under **heteroskedasticity**
+
+- Obvious problem...how do we know the outcome variance in the treated and control groups before running the experiment!
+  - Could throw away some sample on a "pilot" to estimate the variances and then lock in a non-uniform assignment for the "real" experiment.
+  - Or you could use your entire dataset and **combine** the analysis!
+  
+:::
+
+# Batch-Adaptive Neyman Allocation
+
+::: {.incremental}
+
+- A **batch-adaptive** Neyman Allocation approach splits the sample into two "batches" of observations **(Blackwell, Pashley, Valentino, 2023)**
+  - First batch: **Complete randomization**
+  - Second batch: **Neyman allocation** using estimated outcome variances from the first batch.
+  
+- How do we analyze this?
+  - Can we just ignore the batches and take the difference-in-means?
+  - No! What if "batch" is correlated with the outcome (e.g. we split on the order in which units enter out sample)
+  
+- Need to **stratify** on batch when estimating the ATE.
+
+:::
+
+# (Optimal) Pair Matching
+
+::: {.incremental}
+
+- Another way to reduce the variance of our treatment effect estimator is to **stratify** on covariates $X_i$
+- Estimate the **conditional average treatment effects** and aggregate up
+  
+  $$\tau(x) = E[Y_i(1) - Y_i(0) | X_i = x]$$
+  $$\tau = \sum_{x \in \mathcal{X}} \tau(x) \times Pr(X_i = x)$$
+
+- **Goal**: Pick covariates that **reduce the outcome variance**
+  - **Problem**: How do we know which ones are most relevant?
+  - Theory can only take you so far!
+
+:::
+
+# (Optimal) Pair Matching
+
+- **Bai (2022)** shows that an MSE-optimal strategy (under uniform assignment) for stratification is to **pair-match** on the **sum of the potential outcomes**
+
+1) Define
+
+  $$g(X) = E[Y_i(1) + Y_i(0) | X] = E[Y_i(1) | X] + E[Y_i(0) | X]$$
+  
+2) Order units by $g(X)$
+3) Pair adjacent units, randomize treatment
+
+# (Optimal) Pair Matching
+
+::: {.incremental}
+
+- **Problem**: How do we know $E[Y_i(1) | X]$ and $E[Y_i(0) | X]$ before the experiment?
+  - If $X$ is a single covariate and we assume monotonicity in the relationship between $X$ and $Y$, we just match on $X$
+  - Otherwise...we can use a **batch-adaptive design**
+  
+- **First batch** - Complete Randomization
+  - Estimate the regression functions $E[Y_i(1) | X]$ and $E[Y_i(0) | X]$ (using flexible methods like random forests)
+- **Second batch** - Pair match on the predicted values from the estimated $g(X)$ applied to the new sample
+
+- We're relying on the assumption that $E[Y_i(1) | X]$ and $E[Y_i(0) | X]$ are the same across batches.
+  - Guaranteed in random batches, but might fail in sequential batches.
+  - Doesn't induce bias, but might make our "proxy" from the first batch not **as good**
+  
+:::
+
+# Thompson Sampling
+
+::: {.incremental}
+
+- The last use of adaptation (and most typical of industry experiments) is experimenting to choose a **best treatment**
+  - What ad should we serve a user to improve click-through rates?
+  - What message is most effective at encouraging a particular behavior?
+  - See **Offer-Westort, Coppock, Green (2021)** for a review in PS
+
+- If we have **many treatments** $D_i \in \{1, 2, \dotsc K\}$ allocating uniformly is sub-optimal.
+  - We shouldn't allocate treatment to ineffective treatment arms.
+  - But we don't know what's effective until we allocate treatment!
+  - Can we come up with an algorithm that minimizes our **regret** (the difference between the "most effective" arm and the one we choose)
+ 
+:::
+
+# Thompson Sampling
+ 
+::: {.incremental}
+
+- **Thompson Sampling** is a popular technique for allocating treatment in these sorts of **multi-armed bandit** problems
+  - Suppose we a binary outcome $Y$ and $K$ unique treatments, each with some probability of "success" $\theta_k$
+  
+- We want to assign treatment based on our **beliefs** about the unknown success probabilities, given past outcomes - that is, the **posterior distribution**
+
+  $$f(\theta | Y) \propto \underbrace{f(Y | \theta)}_{\text{likelihood}} \times \underbrace{f(\theta)}_{\text{prior}}$$
+  
+- With binary outcomes, the likelihood is just **binomial**
+  - And it's easiest to assign a conjugate prior - the **beta distribution**
+
+- So the **posterior** distribution on the $\theta$ parameters is also **beta**
+
+:::
+
+# Thompson Sampling
+ 
+::: {.incremental}
+
+- The **Thompson sampling** algorithm for observation $i$
+
+1. For each treatment $k$, sample $\theta_k$ from $f(\theta_k | Y_1, Y_2, \dotsc, Y_{i-1})$
+2. Assign the treatment with the highest sampled $\theta_k$, observe the outcome
+3. Update the posterior distribution 
+
+:::
+
+# Practical concerns
+
+::: {.incremental}
+
+- Outside of **immediate feedback** settings, Thompson sampling typically is done in batches
+  - Update the posterior after each **batch** of observations rather than from a single observation.
+  
+- In industry, the target of inference is typically just $f(\theta | Y)$...which we get directly from this approach
+
+- But for **treatment effect estimation**, we have some additional complications.
+  - We typically want to make sure we always allocate enough to the common **control** condition.
+  - We need to adjust the analysis to consider unequal assignment probabilities - inverse propensity weighting
+  - IPW works terribly with low treatment probabilities, so bandits aren't great if we want **every** effect we're considering
+  
+- Possible usage: "Big" pilots 
+  - Suppose we have a **massively factorial** experiment - most treatments are irrelevant.
+  - We want to find the combinations that could be effective ex-ante to then explore in a full experiment.
+  - Bandit allocation in the **pilot** but then standard randomization in the **verification**
+  
+:::
+  
