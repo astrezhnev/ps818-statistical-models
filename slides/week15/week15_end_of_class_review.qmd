@@ -1,0 +1,506 @@
+---
+title: "Week 15: End of Class Review"
+subtitle: "PS 818 - Statistical Models"
+author:
+  - name: "Anton Strezhnev"
+    affiliation: "University of Wisconsin-Madison"
+    email: strezhnev@wisc.edu
+date: "December 8, 2025"
+date-format: "MMMM D, YYYY"
+editor: 
+  render-on-save: true
+format: 
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    overview: true
+    navigation-mode: vertical
+    progress: false
+    controls: true
+    link-external-newwindow: true
+    footer: "PS 818 - University of Wisconsin - Madison"
+    html-math-method:
+      method: mathjax
+      url: https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+execute: 
+  cache: false
+code:
+  execute: 
+    - r
+    - python
+embed-resources: true
+
+---
+
+# Quantitative Social Science and Political Science
+
+$$
+  \require{cancel}
+  \DeclareMathOperator*{\argmin}{arg\,min}
+$$
+
+
+$$
+ \DeclareMathOperator*{\argmax}{arg\,max}
+$$
+
+```{r, echo = F, message=F, warnings=F}
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(knitr)
+options(digits=3)
+```
+
+# The Ideal Methods Sequence
+
+::: {.incremental}
+
+- **Intro to Statistics**
+  - Fundamentals of probability theory
+  - Principles of statistical inference
+  - Point/Interval Estimation; Hypothesis Testing
+  - Where does **uncertainty** come from in the research process?
+
+- **Causal Inference**
+  - What is a causal effect?
+  - What assumptions do we need to learn these from data?
+  - What can we do when we can't randomize?
+  
+- **Statistical Models**
+  - What is a statistical model?
+  - How do we estimate the **parameters** of the model?
+  - How do we generate **predictions**?
+  - How do we evaluate the quality of a predictive model?
+  - How can we use models to **describe** and **summarize**
+  
+:::
+
+# My philosophy in a nutshell
+
+::: {.incremental}
+
+1. The goal of statistics in science is to properly characterize error in the process of observation.
+2. Models aren't real.
+3. Causal effects **are** real.
+4. "Mechanisms" are either statements about mediation or interaction
+5. Models are useful if they can predict or if they can summarize
+
+:::
+
+# A Typology of Political Science "Quant"
+
+::: {.incremental}
+
+- **Experimentalists**
+  - Psychology-based experimentalists
+  - Stats/econometrics-based experimentalists
+
+- **Observational Causal Inference**
+  - "Credibility revolution"
+  - Model-based inference
+  
+- **Observational** (non-causal)
+  - "Structural" estimation 
+  - Model-based description
+
+- **Pure description**
+  - Public opinion surveys
+
+:::
+
+# A Typology of Political Science "Quant"
+
+::: {.incremental}
+
+- Where does "text-as-data" fit in?
+  - Some of this is just "advanced" methods to replace human coders (e.g. LLMs)
+  - But the actual **models** usually fall into "model-based description"
+
+- How about the formal modellers?
+  - No empirics/motivating qualitative case (IMO, ideal)
+  - Structural estimation of model parameters.
+  - "Hypotheses" obtained from comparative statics on model parameters $\leadsto$ standard causal inference
+
+- Some will argue that empirics are useless without a connection to some feature of a theoretical model.
+  - I'd disagree - causal effects are still "real" insofar as they correspond to an intervention we could do
+  - I will grant that any sort of notion of generalization/transportation needs a theory
+  
+:::
+
+# This course
+
+::: {.incremental}
+
+1. Linear regression to estimate $E[Y|X]$ using a linear combination of the columns of $X$
+2. Generalized Linear Models to estimate $E[Y|X]$ using a linear combination of the columns of $X$ and a **transformation** $g()$
+3. Maximum Likelihood to obtain CAN estimates of GLM parameters
+4. Bayesian inference on parameters - **posterior** = **likelihood** $\times$ **prior**
+5. Bayesian inference for GLMs - Incorporating structure through priors
+6. Models for summarizing data: mixture models, factor models
+7. Models for flexibly estimating $E[Y|X]$
+
+:::
+
+# What we didn't cover
+
+::: {.incremental}
+
+- Method of moments estimation (common in econometrics/structural estimation).
+  - **General concept**: Estimators as *solutions to systems of equations* - you saw this with MLE (we set the score to 0)
+  
+- Neural networks 
+  - Defining input-output models via sequences of **layers**
+  - Lots of "reinvention" of concepts from stats (with different names)
+  - Building blocks look like familiar models we've seen (e.g. logistic regression)
+
+:::
+
+# Review: OLS
+
+::: {.incremental}
+
+- A **linear predictor** is defined as a linear combination of the explanatory variables and coefficients
+
+  $$m(x) = x^\prime\beta = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_3 + \dotsc$$
+- The **best linear predictor** is the linear predictor that minimizes the **population** squared prediction error
+
+  $$\beta = \argmin_b \ \mathbb{E}[(Y_i - X_i^\prime b)^2]$$
+  
+- There's a closed form solution in terms of population expectations.
+
+  $$m(X_i) = X_i^\prime\beta = X_i^\prime (\mathbb{E}[X_iX_i^\prime])^{-1}\mathbb{E}[X_iY_i]$$
+  
+:::
+
+# Review: OLS
+
+::: {.incremental}
+
+- **Ordinary Least Squares** is an estimator applied to paired observations $Y_i$, and $X_i$
+
+  $$\hat{\beta} = \bigg(\frac{1}{n} \sum_{i=1}^n X_iX_i^\prime\bigg)^{-1}\bigg(\frac{1}{n} \sum_{i=1}^n X_iY_i\bigg)$$
+
+- Often written as:
+
+  $$\hat{\beta} = (\mathbf{X}^\prime\mathbf{X})^{-1}(\mathbf{X}^\prime Y)$$
+
+- When is this consistent for the BLP?
+  - When we have a sample from the target population (however you define the population)
+  - And no perfect collinearity
+  
+:::
+
+# Review: OLS
+
+::: {.incremental}
+
+- To do inference on the CEF, we assume that it's equal to the BLP!
+
+- **Assumption 1**: Linearity
+
+  $$Y_i = X_i^\prime\beta + \epsilon_i$$
+
+- **Assumption 2**: Strict exogeneity of the errors
+
+  $$\mathbb{E}[\epsilon | \mathbf{X}] = 0$$
+  
+- What does this get us?
+  - Finite-sample properties of OLS (unbiasedness in addition to consistency!)
+
+- When is linearity always **true**?
+  - When we have a fully-saturated model!
+
+:::
+
+
+# Review: OLS
+
+::: {.incremental}
+
+- To do inference on the CEF, we assume that it's equal to the BLP!
+
+- **Assumption 1**: Linearity
+
+  $$Y_i = X_i^\prime\beta + \epsilon_i$$
+
+- **Assumption 2**: Strict exogeneity of the errors
+
+  $$\mathbb{E}[\epsilon | \mathbf{X}] = 0$$
+  
+- What does this get us?
+  - Finite-sample properties of OLS (unbiasedness in addition to consistency!)
+
+- When is linearity always **true**?
+  - When we have a fully-saturated model!
+
+:::
+
+# Review: OLS
+
+::: {.incremental}
+
+- With no other assumptions, inference on the sampling variance of $\hat{\beta}$ takes the form of the "sandwich estimator"
+
+  $$\widehat{Var(\hat{\beta})} =  (\mathbf{X}^\prime\mathbf{X})^{-1} (X^\prime \hat{\Sigma} \mathbf{X}) (\mathbf{X}^\prime\mathbf{X})^{-1}$$
+
+- Under i.i.d. but heteroskedastic observations, we'll plug in $\hat{\Sigma} = \text{diag}(\hat{e_1}^2, \hat{e_2}^2, \dotsc \hat{e_n}^2)$
+  - "Heteroskedasticity-robust" SEs (HC1, HC2, HC3, etc...)
+
+- If we assume arbitrary correlation across observations **within** cluster but independence **across** clusters, our plug-in for $\hat{\Sigma}$ is a block diagonal matrix with off-diagonals $\hat{e_i}\hat{e_j}$ for $i, j$ in the same cluster.
+  - "Clustered standard errors" 
+  
+:::
+
+# Some useful-to-remember OLS tricks
+
+::: {.incremental}
+
+- Sum of the OLS residuals is zero
+
+  $$\sum_{i=1}^N (Y_i - \hat{Y_i}) = 0$$
+  
+- We can go from $Y$ to $\hat{Y}$ via the **projection matrix**
+
+  $$\mathbf{P}_{\mathbf{X}} = \mathbf{X}(\mathbf{X}^\prime\mathbf{X})^{-1}\mathbf{X^\prime}$$
+- **Frisch-Waugh-Lovell** - Any OLS coefficient $\hat{\beta}_k$ can be written as
+
+  $$\hat{\beta}_k = \frac{\widehat{\text{Cov}}(Y^{\perp \mathbb{X}_{-k}}, X_k^{\perp \mathbb{X}_{-k}})}{\widehat{\text{Var}}( X_k^{\perp \mathbb{X}_{-k}}) }$$
+  
+:::
+
+# Generalized Linear Models
+
+::: {.incremental}
+
+- When teaching OLS, we focused on estimating the CEF $E[Y|X]$ with linear regression
+  - The CEF is an "optimal predictor" for $Y$ in that it achieves lowest mean-squared error.
+  
+- We want to make predictions for **out of sample** observations
+  - Covariate profiles that don't necessarily exist in our sample.
+  
+- Our linear CEF assumption might create some problems!
+  - With a binary outcome, we might get predictions that are negative or greater than 1 - **impossible probabilities**
+  
+- GLMs model a **function** of the CEF with the linear predictor
+
+  $$g(E[Y|X]) = X\beta$$
+
+:::
+
+# The logistic regression
+
+::: {.incremental}
+
+- The GLM that you are **most likely** to use is the logistic regression.
+  - Estimating **propensity scores** for (augmented) inverse probability weighting
+  
+- **Example**: **Keriakes et. al. (2000)** "Abciximab provides cost-effective survival advantage in high-volume interventional practice"*
+  - Abciximab, an anti-clotting drug, is often used during certain types of heart surgery to reduce bleeding risk.
+  - Keriakes et. al. (2000) look at 1472 surgeries in Ohio Heart Health Center
+  - Abciximab was administered *non-randomly* -- some types of patients more likely to receive the drug than others
+
+:::
+
+# Logistic regression
+
+::: {.incremental}
+
+- The "logit" or "logistic" GLM models the **log-odds** of a binary outcome as a function of the linear predictor $X_i^{\prime}\beta$
+
+  $$Y_i \underset{\text{i.i.d}}{\sim} \text{Bernoulli}(\pi_i)$$
+
+  $$E[Y_i | X_i] = Pr(Y_i = 1 | X_i) = \pi_i$$
+
+  $$\log\bigg(\frac{\pi_i}{1-\pi_i}\bigg) = X_i^{\prime}\beta$$
+
+- Alternatively, this is written in terms of the "inverse-link" function (the logistic function) that relates $\pi_i$ to $g^{-1}(X_i^{\prime}\beta)$
+
+  $$\pi_i = \frac{\exp(X_i^{\prime}\beta)}{1 + \exp(X_i^{\prime}\beta)} = \frac{1}{1 + \exp(-X_i^{\prime}\beta)}$$
+
+:::
+
+# Maximum Likelihood
+
+::: {.incremental}
+
+- We obtain an estimate of $\beta$, $\hat{\beta}$ using maximum likelihood.
+- Our MLE estimator maximizes the **likelihood** conditional on the data
+
+  $$\hat{\beta} = \argmax_\beta \ \log f(\mathbf{y} | \beta, \mathbf{X})$$
+  
+- This likelihood is defined as the density of the data 
+  - But don't confuse it with a density as the input is the **parameter value** and not the **data** itself
+  
+- Optimization via **numerical techniques**
+  - Newton-Raphson
+  - Gradient Ascent
+
+:::
+
+
+# Example: Propensity Scores
+
+- Let's go back to the **Keriakes et. al. (2000)** dataset and play around a bit more with the model structure
+
+```{r, warning=F, message=F, echo=T}
+# Read in the dataset
+pci <- read_csv("data/pci.csv")
+```
+
+- We want to predict treatment: `abcix` using a mix of discrete and continuous covariates...
+  - `stent` - Coronary stent deployment; binary indicator
+  - `height` - Height in centimeters; numeric integer
+  - `female` - Female gender; binary indicator
+  - `diabetic` - Diabetes mellitus diagnosis; binary indicator
+  - `acutemi` - Acute myocardial infarction within the previous 7 days; binary indicator
+  - `ejecfrac` - Left ejection fraction; numeric integer
+  - `ves1proc` - Number of vessels involved in the patient’s initial PCI procedure; numeric integer
+  
+
+# Example: Propensity Scores
+
+- First, let's just illustrate why OLS is going to not work well for the task of obtaining **fitted values** when we don't have a saturated model.
+
+```{r, warning=F, message=F, echo=T}
+ols_reg <- lm(abcix ~ stent*(female + height + diabetic + acutemi + ejecfrac + ves1proc), data=pci)
+pci$ols_fitted <- predict(ols_reg)
+```
+
+# Example: Propensity Scores
+
+```{r, message=F}
+pci %>% ggplot(aes(x=ols_fitted)) + geom_histogram() + xlab("Estimated Probability of abciximab use\nLinear regression") + theme_minimal()
+```
+  
+
+# Example: Propensity Scores
+
+- Let's fit the logistic regression
+
+```{r, warning=F, message=F, echo=T}
+pscore_reg <- glm(abcix ~ stent*(female + height + diabetic + acutemi + ejecfrac + ves1proc), data=pci, 
+                  family=binomial(link="logit"))
+pci$prob_treat <- predict(pscore_reg, type="response")
+```
+
+# Example: Propensity Scores
+
+```{r, message=F}
+pci %>% ggplot(aes(x=prob_treat)) + geom_histogram() + xlab("Estimated Probability of abciximab use\nLogit regression") + theme_minimal()
+```
+
+# Validating binary classifiers
+
+::: {.incremental}
+
+- We can compute the classic measures of "error" that we're used to (e.g. in-sample or out-of-sample mean squared error).
+- But binary classifiers are often visualized using **Receiver Operating Characteristic** (ROC) curves.
+- The logistic regression outputs a **continuous** estimate of $Pr(Y = 1 | X)$
+  - But converting that to an actual 0/1 **prediction** requires setting some threshold probability.
+  
+- If we set the threshold low, that guarantees we'll get every **true positive**
+  - But we'll get a lot of **false postiives** too
+  
+- The **ROC** curve captures this trade-off. Different points reflect different classification thresholds
+  - **x-axis** - false positive rate
+  - **y-axis** - true positive rate
+
+:::
+
+# ROC Curve
+
+- A recent implementation of this exists in the `plotROC` R package
+
+```{r, echo=T}
+library(plotROC)
+in_sample_roc <- pci %>% ggplot(aes(d = abcix, m = prob_treat)) + geom_roc() + theme_minimal() + 
+  labs(x = "False Positive Rate", y = "True Positive Rate") + geom_abline(lty=2, col="indianred")
+```
+
+# ROC Curve
+
+```{r}
+in_sample_roc 
+```
+
+# ROC Curve
+
+- What does a **purely random** classifier look like?
+
+```{r, echo=T}
+set.seed(537)
+pci$random_class <- runif(nrow(pci))
+random_roc <- pci %>% ggplot(aes(d = abcix, m = random_class)) + geom_roc() + theme_minimal() + 
+  labs(x = "False Positive Rate", y = "True Positive Rate") + geom_abline(lty=2, col="indianred")
+```
+
+# ROC Curve
+
+- It's the 45 degree line!
+
+```{r}
+random_roc
+```
+
+
+# ROC Curve
+
+- What does a **perfect** classifier look like?
+
+```{r, echo=T}
+true_roc <- pci %>% ggplot(aes(d = abcix, m = abcix)) + geom_roc() + theme_minimal() + 
+  labs(x = "False Positive Rate", y = "True Positive Rate") + geom_abline(lty=2, col="indianred")
+```
+
+# ROC Curve
+
+- It's the "box"
+
+```{r}
+true_roc
+```
+
+# ROC Curve
+
+- A predictive model's ROC curve will typically be between those two extremes
+  - A common single-variable summary of predictive quality is therefore the **area under curve** (AUC)
+  
+- What's the AUC of our model in-sample?
+
+```{r, echo=T}
+calc_auc(in_sample_roc)
+```
+
+# Cross-validation
+
+- We usually don't want to focus too much on **in-sample** fit
+  - A more flexible model will always improve in-sample fit (overfitting)
+  
+- Let's implement a 5-fold cross-validation approach
+
+```{r, echo=T}
+set.seed(537)
+pci_shuffled <- pci[sample(1:nrow(pci)),]
+pci_shuffled$fold <- cut(seq(1:nrow(pci)), breaks = 5, labels = FALSE)
+pci_shuffled$prob_treat_cv <- NA
+for (f in 1:5){
+  pscore_reg_fold <- glm(abcix ~ stent*(female + height + diabetic + acutemi + ejecfrac + ves1proc), data=pci_shuffled %>% filter(fold != f), 
+                  family=binomial(link="logit"))
+  pci_shuffled$prob_treat_cv[pci_shuffled$fold == f] <- predict(pscore_reg_fold, newdata = pci_shuffled %>% filter(fold == f), type="response")
+}
+```
+
+# Cross-validation
+
+```{r, echo=T}
+oos_roc <- pci_shuffled %>% ggplot(aes(d = abcix, m = prob_treat)) + geom_roc() + geom_roc(aes(m = prob_treat_cv), col="dodgerblue") + theme_minimal() + 
+  labs(x = "False Positive Rate", y = "True Positive Rate") + geom_abline(lty=2, col="indianred")
+```
+
+# Cross-validation
+
+```{r, echo=T}
+oos_roc
+```
+
