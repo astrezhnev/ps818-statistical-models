@@ -504,3 +504,219 @@ oos_roc <- pci_shuffled %>% ggplot(aes(d = abcix, m = prob_treat)) + geom_roc() 
 oos_roc
 ```
 
+# More on hierarchical models
+
+
+::: {.incremental}
+
+- In the Bayesian GLM, we introduced the idea of **regularizing** group-specific intercepts and slopes
+  - Common "grand mean" intercept $\beta_0$
+  - State-level **random effects** $\alpha_i \sim \text{Normal}(0, \sigma^2_{\alpha})$
+  
+- We estimate $\sigma^2_{\alpha}$ from the data (put an additional prior on it)
+  - But could imagine fixing it to a particular value (as we did for the penalty in ridge regression)
+  - High $\sigma^2_{\alpha}$ = less pooling
+  - Low $\sigma^2_{\alpha}$ = more pooling
+
+:::
+
+# Hierarchical Models
+
+::: {.incremental}
+
+- We can do this sort of regularization with other sorts of categorical variables as well!
+  - Consider an "education" variable with 4 levels of education
+  - Suppose I want to regularize the coefficients on each level towards zero.
+  - But in the normal "dummy" variable implementation, we have to pick a "held-out" level that forms our reference group
+- Instead, of coding a categorical variable using "dummy" or "treatment" coding, we can use **effect coding**
+  - Same number of new variables, but the codes across categories sum to $0$ - we code some observations as $1$, others as $0$, others as $-1$
+  - $-1$ is still the "omitted" category, but units coded as $1$
+
+:::
+
+# More on regularization
+
+- Here, we're going to use the 2020 CES to study attitudes towards Trump's trade policy
+
+```{r, warning = F, message = F, echo=T}
+ces <- read_csv("data/CES20_Common_OUTPUT_vv.csv")
+```
+
+```{r, echo=F}
+
+# State FIPS
+ces$statefips <- str_pad(ces$inputstate, 2, pad="0")
+
+# Outcome
+ces <- ces %>% mutate(tariff = case_when(CC20_338a == "1" ~ 1,
+                                         CC20_338a == "2" ~ 0,
+                                         TRUE ~ NA_real_))
+
+# Covariates
+# Age
+ces <- ces %>% mutate(age = 2020 - birthyr)
+ces <- ces %>% mutate(age_bin = case_when(age>=18&age<=29 ~ "18-29",
+                                          age>=30&age<=44 ~ "30-44",
+                                          age>=45&age<=64 ~ "45-64",
+                                          age>=65 ~ "65+"))
+
+# Gender
+ces <- ces %>% mutate(gender_bin = case_when(gender == 1 ~ "Male",
+                                             gender == 2 ~ "Female"))
+
+# Race
+ces <- ces %>% mutate(race_bin = case_when(race==3|hispanic==1 ~ "Hispanic",
+                                           race==1 ~ "White",
+                                           race ==2 ~ "Black",
+                                           race == 4  ~ "Asian",
+                                           TRUE ~ "Other"))
+
+# Education
+ces <- ces %>% mutate(educ_bin = case_when(educ>=1&educ<=2 ~ "H.S. or less",
+                                           educ>=3&educ<=4 ~ "Some college",
+                                           educ==5 ~ "College degree",
+                                           educ==6 ~ "Postgraduate"))
+```
+
+
+```{r, echo=F}
+
+ces$gender_bin <- relevel(as.factor(ces$gender_bin), "Male")
+ces$age_bin <- relevel(as.factor(ces$age_bin), "18-29")
+ces$educ_bin <- relevel(as.factor(ces$educ_bin), "H.S. or less")
+ces$race_bin <- relevel(as.factor(ces$race_bin), "White")
+
+```
+
+
+```{r, echo=F}
+ces_full <- ces %>% filter(!is.na(tariff)&!is.na(age_bin)&!is.na(race_bin)&
+                             !is.na(gender_bin)&!is.na(educ_bin)&!is.na(statefips))
+```
+
+
+# More on regularization
+
+- We're going to fit a model to see what predicts support for Trump's tariff policy using `brms`
+
+```{r, warning=F, message=F, echo=T}
+library(brms)
+```
+
+- Estimate the model with just a regularizing prior on the coefficients (ridge regression)
+
+```{r brms1, warning=F, message=F, results=F, echo=T}
+tariff_support <- brm(tariff ~ gender_bin + race_bin + age_bin + educ_bin, 
+                           family = bernoulli(), data=ces_full, 
+                      prior = set_prior("normal(0, 3)"),
+                 cores=4, warmup=1000, iter=2000, seed=53703)
+```
+
+# More on regularization
+
+```{r}
+summary(tariff_support)
+```
+
+# More on regularization
+
+- What does the default "dummy" coding look like vs. "effect coding"
+
+```{r, echo=T}
+contrasts(ces_full$educ_bin)
+contrasts(ces_full$educ_bin) <- contr.sum(levels(ces_full$educ_bin))
+colnames(contrasts(ces_full$educ_bin)) <- rownames(contrasts(ces_full$educ_bin))[-nlevels(ces_full$educ_bin)]
+contrasts(ces_full$educ_bin)
+```
+
+
+# More on regularization
+
+- Let's do this for gender, age and race
+
+```{r, echo=T}
+contrasts(ces_full$gender_bin) <- contr.sum(levels(ces_full$gender_bin))
+colnames(contrasts(ces_full$gender_bin)) <- rownames(contrasts(ces_full$gender_bin))[-nlevels(ces_full$gender_bin)]
+contrasts(ces_full$age_bin) <- contr.sum(levels(ces_full$age_bin))
+colnames(contrasts(ces_full$age_bin)) <- rownames(contrasts(ces_full$age_bin))[-nlevels(ces_full$age_bin)]
+contrasts(ces_full$race_bin) <- contr.sum(levels(ces_full$race_bin))
+colnames(contrasts(ces_full$race_bin)) <- rownames(contrasts(ces_full$race_bin))[-nlevels(ces_full$race_bin)]
+```
+
+
+# More on pooling
+
+- Let's re-fit the model and see what the coefficients look like?
+
+```{r, brms2, warning=F, message=F, results=F, echo=T}
+tariff_support2 <- brm(tariff ~ gender_bin + age_bin + race_bin + educ_bin, 
+                           family = bernoulli(), data=ces_full, 
+                      prior = set_prior("normal(0, 3)"),
+                 cores=4, warmup=1000, iter=2000)
+```
+
+# More on regularization
+
+```{r, echo=T}
+summary(tariff_support2)
+```
+
+# More on regularization
+
+- Why would we do this?
+  - To allow us to **regularize the interactions** while keeping the **main effect parameters** still interpretable!
+  
+- Consider the following simple model
+
+```{r, echo=T}
+summary(lm_robust(tariff ~ educ_bin, data=ces_full))
+```
+
+# More on regularization
+
+- The coefficients on the main terms **are still marginal effects** when I put in the interaction with gender because I effect-coded
+
+```{r, echo=T}
+summary(lm_robust(tariff ~ educ_bin*gender_bin, data=ces_full))
+```
+
+# More on regularization
+
+- Let's estimate the Bayesian GLM with no strong regularization on the interactions between age-gender-education.
+
+```{r, brms3, warning=F, message=F, results=F, echo=T}
+tariff_support3 <- brm(tariff ~ gender_bin + age_bin + race_bin + educ_bin + age_bin*educ_bin*gender_bin , 
+                           family = bernoulli(), data=ces_full, 
+                      prior = set_prior("normal(0, 3)"),
+                 cores=4, warmup=1000, iter=2000)
+```
+
+# More on regularization
+
+```{r}
+plot(tariff_support3, "b_educ_binPostgraduate")
+```
+
+# More on regularization
+
+- Now let's regularize the higher-order interactions a lot more than the base coefficients
+
+```{r, echo=T}
+interactions_prior <- get_prior(tariff_support3)
+interactions_prior$prior[grep(":", interactions_prior$coef)] <- "normal(0, .0002)"
+```
+
+# More on regularization
+
+```{r, brms4, warning=F, message=F, results=F, echo=T}
+tariff_support4 <- brm(tariff ~ gender_bin + age_bin + race_bin + educ_bin + age_bin*educ_bin*gender_bin , 
+                           family = bernoulli(), data=ces_full, 
+                      prior = interactions_prior,
+                 cores=4, warmup=1000, iter=2000)
+```
+
+# More on regularization
+
+```{r}
+plot(tariff_support4, "b_educ_binPostgraduate")
+```
